@@ -608,7 +608,7 @@
     const mask = document.createElement('div'); mask.className = 'modal-mask'; mask.id = 'updatemask';
     mask.innerHTML = `<div class="modal"><h3>🔄 一键更新</h3>
       <p class="muted center" style="margin-bottom:12px">输入超级管理员密码才能更新</p>
-      <div class="field"><label>超级管理员密码</label><input id="supwd" type="password" inputmode="numeric" placeholder="默认 061204"/></div>
+      <div class="field"><label>超级管理员密码</label><input id="supwd" type="password" inputmode="numeric" placeholder="请输入密码"/></div>
       <button class="btn btn-coral btn-block" onclick="doUpdate()">开始更新</button>
       <button class="btn btn-ghost btn-block" onclick="closeUpdate()">取消</button>
       <p class="muted center" id="updmsg" style="min-height:20px"></p></div>`;

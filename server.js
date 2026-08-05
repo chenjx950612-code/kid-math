@@ -356,8 +356,8 @@ async function handleApi(req, res, pathname, segs) {
     const b = await readBody(req);
     if (String(b.password) !== SUPER_ADMIN) return send(res, 200, { ok: false, error: '超级管理员密码错误' });
     try {
-      // 容器内 bind mount 可能触发 Git safe.directory 检查，先放行
-      try { execSync('git config --global --add safe.directory /app', { cwd: __dirname }); } catch (e2) { /* 已配置过则忽略 */ }
+      // 容器内 bind mount 可能触发 Git safe.directory 检查，先放行（用 /root 作 cwd 避免鸡生蛋）
+      try { execSync('git config --global --add safe.directory /app', { cwd: '/root' }); } catch (e2) { /* 已配置过则忽略 */ }
       // 清理本地未提交改动（data 在卷里不会被 stash 影响），再拉取
       execSync('git stash --include-untracked || true', { cwd: __dirname });
       const out = execSync('git pull --ff-only', { cwd: __dirname }).toString();
