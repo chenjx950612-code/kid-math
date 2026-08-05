@@ -38,8 +38,8 @@ body {
 h1.title { text-align: center; font-size: 34px; margin: 10px 0 4px; color: var(--purple); text-shadow: 0 2px 0 #fff; }
 .subtitle { text-align: center; color: var(--muted); margin: 0 0 18px; font-size: 16px; }
 
-.topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
-.topbar .who { display: flex; align-items: center; gap: 10px; background: #fff; padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow); font-size: 18px; }
+.topbar { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
+.topbar .who { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; background: #fff; padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow); font-size: 18px; }
 .points-pill { background: linear-gradient(180deg,#fff3c4,#ffe082); color:#7a5b00; font-weight: 700; padding: 8px 16px; border-radius: 999px; box-shadow: var(--shadow); font-size: 18px; }
 
 /* 孩子菜单顶栏 */

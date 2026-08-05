@@ -537,7 +537,7 @@
     S._children = CHILDREN; S._rewards = REWARDS;
     const tabs = [['children', '👧 孩子'], ['stats', '📊 统计'], ['rewards', '🎁 礼品'], ['redeem', '📋 兑换'], ['settings', '⚙️ 设置']];
     $app.innerHTML = `
-      <div class="topbar" style="position:relative;justify-content:flex-start"><button class="btn btn-ghost" onclick="switchToChild()">←</button><div class="who" style="position:absolute;left:50%;transform:translateX(-50%);top:0">🔧 家长面板</div></div>
+      <div class="topbar"><button class="btn btn-ghost" onclick="switchToChild()">←</button><div class="who">🔧 家长面板</div></div>
       <div class="tabs">${tabs.map(t => `<div class="tab ${S.parentTab === t[0] ? 'active' : ''}" onclick="parentTab('${t[0]}')">${t[1]}</div>`).join('')}</div>
       <div id="parentBody"></div>`;
     await parentBody();
