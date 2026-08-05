@@ -586,7 +586,7 @@
     b.innerHTML = html;
   }
   function rewardsTab(b) {
-    const rs = S._rewards;
+    const rs = S._rewards.slice().sort((a, b) => a.cost - b.cost);
     let html = `<button class="btn btn-primary btn-block" onclick="openRewardModal('')">➕ 添加礼品</button><div class="spacer"></div><div class="list">`;
     for (const r of rs) {
       html += `<div class="row-item"><div><div class="q">${r.icon} ${r.name}</div><div class="tag">⭐ ${r.cost} · ${r.active ? '已上架' : '未上架'}</div></div><button class="btn btn-blue" onclick="openRewardModal('${r.id}')">编辑</button></div>`;
