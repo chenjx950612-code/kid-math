@@ -519,7 +519,7 @@
       <div class="field"><label>请输入家庭 PIN</label><input id="pininput" type="password" inputmode="numeric" maxlength="8" placeholder="请输入 PIN" autocomplete="off"/></div>
       <button class="btn btn-primary btn-block" onclick="submitPin()">进入</button>
       <button class="btn btn-ghost btn-block" onclick="closeModal()">取消</button>
-      <p class="muted center" style="margin-top:6px">验证一次后本机记住登录，下次打开免输入</p></div>`;
+</div>`;
     document.body.appendChild(mask);
   }
   async function submitPin() {
