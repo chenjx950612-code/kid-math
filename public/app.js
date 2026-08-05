@@ -191,8 +191,8 @@
       <div class="topbar"><button class="btn btn-ghost" onclick="selectGrade(${S.grade})">←</button><div class="who">${S.module.name}</div><div></div></div>
       <h1 class="title">选玩法</h1>
       <div class="grid">
-        <div class="card module-card" onclick="selectMode('practice')"><div class="emoji">😊</div><div><div class="m-name">练习模式</div><div class="m-sub">对+2 错-1</div></div></div>
-        <div class="card module-card" onclick="selectMode('timed')"><div class="emoji">⏱️</div><div><div class="m-name">计时模式</div><div class="m-sub">越快加分越多</div></div></div>
+        <div class="card module-card" onclick="selectMode('practice')"><div class="emoji">😊</div><div><div class="m-name">练习模式</div><div class="m-sub">对+1 错不扣</div></div></div>
+        <div class="card module-card" onclick="selectMode('timed')"><div class="emoji">⏱️</div><div><div class="m-name">计时模式</div><div class="m-sub">对+1~2 越快越多</div></div></div>
         <div class="card module-card" onclick="selectMode('challenge')"><div class="emoji">🏆</div><div><div class="m-name">闯关模式</div><div class="m-sub">达标通关 +10，全对 +15</div></div></div>
       </div>`;
   }
