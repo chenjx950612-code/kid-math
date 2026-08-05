@@ -374,7 +374,7 @@
     $app.innerHTML = `
       <div class="topbar"><button class="btn btn-ghost" onclick="renderChildMenu()">←</button><div class="who">${S.child.avatar} ${S.child.name}</div><div class="points-pill">⭐ ${sum.points}</div></div>
       <h1 class="title">错题本</h1>
-      <p class="subtitle">订正不再加分，但订正对后会移出错题本</p>
+      <p class="subtitle">订正后会移出错题本</p>
       <div class="list">
         ${wb.length ? wb.map((e, i) => `<div class="row-item"><div><div class="q">${e.questionText} = ?</div><div class="tag">答错 ${e.count} 次</div></div><button class="btn btn-yellow" onclick="startCorrection(${i})">订正</button></div>`).join('') : '<p class="center muted">太棒了，暂时没有错题！🎉</p>'}
       </div>`;
