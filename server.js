@@ -363,10 +363,12 @@ async function handleApi(req, res, pathname, segs) {
       const out = execSync('git pull --ff-only', { cwd: __dirname }).toString();
       try { APP_VERSION = execSync('git rev-parse --short HEAD', { cwd: __dirname }).toString().trim(); } catch (e) {}
       save();
+      // 区分是否有新代码：未变化时输出含 "Already up to date."
+      const noChange = /Already up to date\./.test(out);
       // 先返回结果，再由 Docker（restart: unless-stopped）自动重启容器以加载新代码
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, version: APP_VERSION, output: out }));
-      setTimeout(() => process.exit(0), 600);
+      res.end(JSON.stringify({ ok: true, version: APP_VERSION, output: out, noChange }));
+      if (!noChange) setTimeout(() => process.exit(0), 600);
       return;
     } catch (e) {
       return send(res, 200, { ok: false, error: '更新失败：' + String(e.message || e) });

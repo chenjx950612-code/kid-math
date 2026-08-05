@@ -398,7 +398,7 @@
   // ---------- 礼品店 ----------
   async function gotoStore() {
     const c = S.child;
-    const rewards = REWARDS.filter(r => r.active);
+    const rewards = REWARDS.filter(r => r.active).sort((a, b) => a.cost - b.cost);
     $app.innerHTML = `
       <div class="topbar"><button class="btn btn-ghost" onclick="renderChildMenu()">←</button><div class="who">${c.avatar} ${c.name}</div><div class="points-pill">⭐ ${c.points}</div></div>
       <h1 class="title">礼品店</h1>
@@ -512,7 +512,7 @@
     S._children = CHILDREN; S._rewards = REWARDS;
     const tabs = [['children', '👧 孩子'], ['stats', '📊 统计'], ['rewards', '🎁 礼品'], ['redeem', '📋 兑换'], ['settings', '⚙️ 设置']];
     $app.innerHTML = `
-      <div class="topbar"><button class="btn btn-ghost" onclick="switchToChild()">←</button><div class="who">🔧 家长面板</div><div></div></div>
+      <div class="topbar" style="position:relative;justify-content:flex-start"><button class="btn btn-ghost" onclick="switchToChild()">←</button><div class="who" style="position:absolute;left:50%;transform:translateX(-50%);top:0">🔧 家长面板</div></div>
       <div class="tabs">${tabs.map(t => `<div class="tab ${S.parentTab === t[0] ? 'active' : ''}" onclick="parentTab('${t[0]}')">${t[1]}</div>`).join('')}</div>
       <div id="parentBody"></div>`;
     await parentBody();
@@ -531,8 +531,8 @@
     let html = `<button class="btn btn-primary btn-block" onclick="openAddChild()">➕ 添加小朋友</button><div class="spacer"></div><div class="list">`;
     for (const c of kids) {
       html += `<div class="row-item"><div><div class="q">${c.avatar} ${c.name}</div><div class="tag">${GRADE_LABELS[c.grade] || ''} · ⭐ ${c.points}</div></div>
-        <button class="btn btn-blue" onclick="openEditGrade('${c.id}',${c.grade})">改年级</button>
-        <button class="btn btn-coral" onclick="delChild('${c.id}')">删除</button></div>`;
+        <button class="btn btn-blue btn-sm" onclick="openEditGrade('${c.id}',${c.grade})">改年级</button>
+        <button class="btn btn-coral btn-sm" onclick="delChild('${c.id}')">删除</button></div>`;
     }
     html += '</div>';
     b.innerHTML = html;
@@ -624,6 +624,7 @@
     try {
       const r = await api('POST', '/api/admin/update', { password: pwd });
       if (!r.ok) { _updating = false; msg.textContent = r.error || '更新失败'; return; }
+      if (r.noChange) { _updating = false; msg.textContent = '✅ 已经是最新版本，无需更新'; return; }
       msg.textContent = '更新成功，正在重启…';
       // 服务器会重启，前端轮询到版本变化或连接恢复后自动刷新
       toast('更新成功，页面即将刷新');

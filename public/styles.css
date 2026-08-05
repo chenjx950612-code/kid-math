@@ -76,6 +76,7 @@ h1.title { text-align: center; font-size: 34px; margin: 10px 0 4px; color: var(-
 .btn-ghost { background: #fff; color: var(--ink); box-shadow: 0 6px 0 rgba(0,0,0,0.08); }
 .btn-block { display: block; width: 100%; margin: 10px 0; }
 .btn:disabled { filter: grayscale(.6) opacity(.6); cursor: not-allowed; }
+.btn-sm { padding: 6px 14px; font-size: 14px; border-radius: 12px; box-shadow: 0 4px 0 rgba(0,0,0,0.10); }
 
 /* ---------- 卡片栅格 ---------- */
 .grid { display: grid; gap: 16px; }
