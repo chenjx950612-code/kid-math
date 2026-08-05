@@ -97,6 +97,23 @@ function load() {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
   }
   if (!Array.isArray(data.families)) data.families = [];
+
+  // 修复旧版本 bug：daily.earned 曾按「每题对的 +2」累加，错题 -1 只扣 child.points
+  // 不扣 daily.earned，导致有错题时 daily.earned 已到 100 而孩子实际不到 100，被错误封顶。
+  // 修复：今天未兑换过、且 daily.earned 超过孩子当前积分时，回退到孩子当前真实积分。
+  const tk = todayKey();
+  for (const f of data.families) {
+    if (!Array.isArray(f.children)) continue;
+    for (const c of f.children) {
+      if (c.dailyPoints && c.dailyPoints.date === tk && typeof c.dailyPoints.earned === 'number') {
+        const redeemedToday = (f.redemptions || []).some((r) => (r.redeemedAt || '').slice(0, 10) === tk);
+        if (!redeemedToday && c.dailyPoints.earned > (c.points || 0)) {
+          c.dailyPoints.earned = c.points || 0;
+        }
+      }
+    }
+  }
+
   return data;
 }
 
@@ -118,16 +135,15 @@ function computeSession(family, body) {
   const child = family.children.find((c) => c.id === childId);
   if (!child) return { error: 'child not found' };
 
-  let pointsDelta = 0;
+  const daily = getDaily(child);
+  let pointsDelta = 0; // 本次「原始」净增减（对+2/错-1 + 计时/闯关加成）
   const ledger = [];
   const sessionAttempts = [];
   let correctCount = 0;
-  const daily = getDaily(child);
-  let dailyCapped = false;
 
   for (const q of questions) {
     const correct = !!q.correct;
-    let delta = correct ? 2 : -1;
+    let delta = correct ? 2 : -1; // 对+2 错-1
 
     if (mode === 'timed' && correct) {
       let bonus = 0;
@@ -136,15 +152,7 @@ function computeSession(family, body) {
       if (bonus > 0) delta += bonus;
     }
 
-    if (delta > 0) {
-      const room = DAILY_CAP - daily.earned;
-      if (room <= 0) { delta = 0; dailyCapped = true; }
-      else if (delta > room) { delta = room; dailyCapped = true; }
-    }
-    if (delta > 0) daily.earned += delta;
-
-    const reason = correct ? 'correct' : 'wrong';
-    ledger.push({ reason, delta });
+    ledger.push({ reason: correct ? 'correct' : 'wrong', delta });
     if (correct) correctCount++;
     pointsDelta += delta;
 
@@ -158,17 +166,18 @@ function computeSession(family, body) {
   let challengeBonus = 0;
   if (mode === 'challenge') {
     const acc = questions.length ? correctCount / questions.length : 0;
-    if (acc >= 0.8) {
-      let bonus = 10;
-      const room = DAILY_CAP - daily.earned;
-      if (room <= 0) { bonus = 0; dailyCapped = true; }
-      else if (bonus > room) { bonus = room; dailyCapped = true; }
-      if (bonus > 0) { daily.earned += bonus; pointsDelta += bonus; ledger.push({ reason: 'challenge_clear', delta: bonus }); }
-      challengeBonus = bonus;
-    }
+    if (acc >= 0.8) { challengeBonus = 10; pointsDelta += 10; ledger.push({ reason: 'challenge_clear', delta: 10 }); }
   }
 
-  child.points += pointsDelta;
+  // 每日上限：按「实际净增积分」封顶（错题 -1 会减少净增，不会虚占额度）
+  // 这样孩子真实积分达到 100 才会封顶，有错题时不会提前被锁死
+  const room = DAILY_CAP - daily.earned;
+  let granted = pointsDelta;
+  let dailyCapped = false;
+  if (granted > 0 && granted > room) { granted = room; dailyCapped = true; }
+  if (granted > 0) daily.earned += granted; // 只累计真正加到孩子积分上的正分
+  child.points += granted;
+
   const sessionId = rid();
   family.sessions.push({
     id: sessionId, childId, moduleId, moduleName, mode,
@@ -181,7 +190,7 @@ function computeSession(family, body) {
   }
   save();
   return {
-    earned: pointsDelta, total: questions.length, correct: correctCount,
+    earned: granted, total: questions.length, correct: correctCount,
     challengeBonus, points: child.points,
     dailyCapReached: dailyCapped, dailyEarned: daily.earned, dailyCap: DAILY_CAP,
   };
