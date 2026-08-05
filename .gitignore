@@ -4,3 +4,5 @@ data/
 .DS_Store
 kid-math-deploy.tar.gz
 .workbuddy/
+# 临时大图（AI生成的原图，已 resize 成 icon.png / apple-touch-icon.png）
+public/Cute_kids_educational_app_icon_*.png

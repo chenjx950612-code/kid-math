@@ -1,12 +1,13 @@
 // 小学算术练习系统 - 零依赖 Node 服务
-// 负责：静态文件服务 + JSON API（孩子 / 礼品 / 积分 / 错题 / 兑换 / 闯关 / 计时）
+// 负责：静态文件服务 + JSON API（家庭 / 孩子 / 礼品 / 积分 / 错题 / 兑换 / 闯关 / 计时 / 一键更新）
 // 数据存储：data/data.json（单文件，挂载到 NAS 数据卷即可持久化、多设备同源同步）
+// 多家庭隔离：每个家庭独立 PIN、独立数据；通过 X-Family-Id 请求头识别
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execSync, exec } = require('child_process');
+const { execSync } = require('child_process');
 
 const PORT = process.env.PORT || 3333;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -35,6 +36,9 @@ const AVATARS = ['🐱', '🐶', '🐰', '🦊', '🐼', '🦁', '🐯', '🐸',
 // 每日积分上限（防止一天刷太多）
 const DAILY_CAP = 100;
 
+// PIN 格式：4-8 位数字
+const PIN_RE = /^\d{4,8}$/;
+
 // 获取本地日期字符串 YYYY-MM-DD（用于每日重置）
 function todayKey() {
   const d = new Date();
@@ -53,22 +57,47 @@ function getDaily(child) {
 
 function rid() { return crypto.randomUUID(); }
 
+function newFamily(parentPin) {
+  return {
+    id: rid(),
+    parentPin,
+    children: [],
+    rewards: DEFAULT_REWARDS.map((r, i) => ({ id: rid(), ...r, active: true, sort: i })),
+    sessions: [],
+    attempts: [],
+    redemptions: [],
+    pointsLedger: [],
+    corrections: {},
+    createdAt: new Date().toISOString(),
+  };
+}
+
 function load() {
   if (!fs.existsSync(DATA_FILE)) {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    const seed = {
-      parentPin: '1234',
-      children: [],
-      rewards: DEFAULT_REWARDS.map((r, i) => ({ id: rid(), ...r, active: true, sort: i })),
-      sessions: [],
-      attempts: [],
-      redemptions: [],
-      pointsLedger: [],
-      corrections: {}, // childId|questionText -> true（已订正正确）
-    };
+    const seed = { families: [] };
     fs.writeFileSync(DATA_FILE, JSON.stringify(seed, null, 2));
+    return seed;
   }
-  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  // 老版本数据迁移：把顶层 parentPin/children/rewards 等打包进一个默认家庭
+  if (!Array.isArray(data.families) && (data.children || data.parentPin)) {
+    const f = newFamily(data.parentPin || '1234');
+    f.children = data.children || [];
+    f.rewards = data.rewards && data.rewards.length ? data.rewards : f.rewards;
+    f.sessions = data.sessions || [];
+    f.attempts = data.attempts || [];
+    f.redemptions = data.redemptions || [];
+    f.pointsLedger = data.pointsLedger || [];
+    f.corrections = data.corrections || {};
+    data.families = [f];
+    delete data.parentPin; delete data.children; delete data.rewards;
+    delete data.sessions; delete data.attempts; delete data.redemptions;
+    delete data.pointsLedger; delete data.corrections;
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  }
+  if (!Array.isArray(data.families)) data.families = [];
+  return data;
 }
 
 let DB = load();
@@ -76,13 +105,20 @@ function save() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(DB, null, 2));
 }
 
-// ---------- 业务：积分 ----------
-function computeSession(body) {
+// 从请求头获取当前家庭；缺失或无效返回 null
+function getFamily(req) {
+  const fid = (req.headers['x-family-id'] || '').toString();
+  if (!fid) return null;
+  return DB.families.find((f) => f.id === fid) || null;
+}
+
+// ---------- 业务：积分（家庭作用域） ----------
+function computeSession(family, body) {
   const { childId, moduleId, moduleName, mode, questions, durationSec } = body;
-  const child = DB.children.find((c) => c.id === childId);
+  const child = family.children.find((c) => c.id === childId);
   if (!child) return { error: 'child not found' };
 
-  let pointsDelta = 0;       // 实际加到 child.points 的值
+  let pointsDelta = 0;
   const ledger = [];
   const sessionAttempts = [];
   let correctCount = 0;
@@ -91,9 +127,8 @@ function computeSession(body) {
 
   for (const q of questions) {
     const correct = !!q.correct;
-    let delta = correct ? 2 : -1; // 基础：对+2 错-1（允许负数）
+    let delta = correct ? 2 : -1;
 
-    // 计时模式速度奖励
     if (mode === 'timed' && correct) {
       let bonus = 0;
       if (q.responseMs <= 3000) bonus = 2;
@@ -101,7 +136,6 @@ function computeSession(body) {
       if (bonus > 0) delta += bonus;
     }
 
-    // 每日上限：只对正积分做限制
     if (delta > 0) {
       const room = DAILY_CAP - daily.earned;
       if (room <= 0) { delta = 0; dailyCapped = true; }
@@ -121,7 +155,6 @@ function computeSession(body) {
     });
   }
 
-  // 闯关达标奖励（也受每日上限约束）
   let challengeBonus = 0;
   if (mode === 'challenge') {
     const acc = questions.length ? correctCount / questions.length : 0;
@@ -137,14 +170,14 @@ function computeSession(body) {
 
   child.points += pointsDelta;
   const sessionId = rid();
-  DB.sessions.push({
+  family.sessions.push({
     id: sessionId, childId, moduleId, moduleName, mode,
     startedAt: new Date().toISOString(), durationSec: durationSec || 0,
     total: questions.length, correct: correctCount,
   });
-  for (const a of sessionAttempts) { a.sessionId = sessionId; DB.attempts.push(a); }
+  for (const a of sessionAttempts) { a.sessionId = sessionId; family.attempts.push(a); }
   for (const l of ledger) {
-    DB.pointsLedger.push({ id: rid(), childId, delta: l.delta, reason: l.reason, refId: sessionId, createdAt: new Date().toISOString() });
+    family.pointsLedger.push({ id: rid(), childId, delta: l.delta, reason: l.reason, refId: sessionId, createdAt: new Date().toISOString() });
   }
   save();
   return {
@@ -154,9 +187,9 @@ function computeSession(body) {
   };
 }
 
-function doCorrection(body) {
+function doCorrection(family, body) {
   const { childId, questionText, correct } = body;
-  const child = DB.children.find((c) => c.id === childId);
+  const child = family.children.find((c) => c.id === childId);
   if (!child) return { error: 'child not found' };
   if (correct) {
     const daily = getDaily(child);
@@ -170,31 +203,31 @@ function doCorrection(body) {
       capped = true;
     }
     child.points += delta;
-    DB.pointsLedger.push({ id: rid(), childId, delta, reason: 'correct_correction', refId: questionText, createdAt: new Date().toISOString() });
-    DB.corrections[childId + '|' + questionText] = true; // 订正正确后移出错题本
+    family.pointsLedger.push({ id: rid(), childId, delta, reason: 'correct_correction', refId: questionText, createdAt: new Date().toISOString() });
+    family.corrections[childId + '|' + questionText] = true;
     save();
     return { delta, points: child.points, dailyCapped: capped, dailyEarned: daily.earned, dailyCap: DAILY_CAP };
   }
   return { delta: 0, points: child.points, dailyCapped: false, dailyEarned: getDaily(child).earned, dailyCap: DAILY_CAP };
 }
 
-function doRedeem(body) {
+function doRedeem(family, body) {
   const { childId, rewardId } = body;
-  const child = DB.children.find((c) => c.id === childId);
-  const reward = DB.rewards.find((r) => r.id === rewardId);
+  const child = family.children.find((c) => c.id === childId);
+  const reward = family.rewards.find((r) => r.id === rewardId);
   if (!child || !reward) return { error: 'not found' };
   if (!reward.active) return { error: 'inactive' };
   if (child.points < reward.cost) return { error: 'not enough', points: child.points };
   child.points -= reward.cost;
-  DB.redemptions.push({ id: rid(), childId, rewardId, redeemedAt: new Date().toISOString(), fulfilled: false });
-  DB.pointsLedger.push({ id: rid(), childId, delta: -reward.cost, reason: 'redeem', refId: rewardId, createdAt: new Date().toISOString() });
+  family.redemptions.push({ id: rid(), childId, rewardId, redeemedAt: new Date().toISOString(), fulfilled: false });
+  family.pointsLedger.push({ id: rid(), childId, delta: -reward.cost, reason: 'redeem', refId: rewardId, createdAt: new Date().toISOString() });
   save();
   return { ok: true, points: child.points };
 }
 
-function childSummary(childId) {
-  const attempts = DB.attempts.filter((a) => a.childId === childId);
-  const sessions = DB.sessions.filter((s) => s.childId === childId);
+function childSummary(family, childId) {
+  const attempts = family.attempts.filter((a) => a.childId === childId);
+  const sessions = family.sessions.filter((s) => s.childId === childId);
   const totalQ = attempts.length;
   const correctQ = attempts.filter((a) => a.correct).length;
   const accuracy = totalQ ? Math.round((correctQ / totalQ) * 100) : 0;
@@ -203,16 +236,16 @@ function childSummary(childId) {
   for (const a of attempts) {
     if (!a.correct) {
       const key = childId + '|' + a.questionText;
-      if (!DB.corrections[key]) {
+      if (!family.corrections[key]) {
         if (!wrongMap[a.questionText]) wrongMap[a.questionText] = { questionText: a.questionText, count: 0, correctAnswer: a.correctAnswer, choices: a.choices };
         wrongMap[a.questionText].count++;
       }
     }
   }
   const wrongBook = Object.values(wrongMap);
-  const recentLedger = DB.pointsLedger.filter((l) => l.childId === childId).slice(-30).reverse();
+  const recentLedger = family.pointsLedger.filter((l) => l.childId === childId).slice(-30).reverse();
   recentLedger.forEach((l) => { l.rewardName = null; });
-  const child = DB.children.find((c) => c.id === childId);
+  const child = family.children.find((c) => c.id === childId);
   return { child, totalQ, correctQ, accuracy, wrongBook, recentLedger, points: child ? child.points : 0, sessionCount: sessions.length };
 }
 
@@ -232,7 +265,7 @@ function readBody(req) {
   });
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon' };
 
 function serveStatic(req, res, pathname) {
   let rel = pathname === '/' ? '/index.html' : pathname;
@@ -242,7 +275,7 @@ function serveStatic(req, res, pathname) {
       if (err) { res.writeHead(404); return res.end('not found'); }
       res.writeHead(200, {
         'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream',
-        'Cache-Control': 'no-cache, no-store, must-revalidate', // 一键更新后保证浏览器拉到最新前端
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0',
       });
@@ -254,29 +287,53 @@ function serveStatic(req, res, pathname) {
 async function handleApi(req, res, pathname, segs) {
   const method = req.method;
 
+  // 公开端点：家庭认证
+  if (pathname === '/api/auth/state' && method === 'GET') {
+    return send(res, 200, { hasFamilies: DB.families.length > 0, familyCount: DB.families.length });
+  }
+  if (pathname === '/api/auth' && method === 'POST') {
+    const b = await readBody(req);
+    const pin = String(b.pin || '').trim();
+    if (!PIN_RE.test(pin)) return send(res, 200, { ok: false, error: 'PIN 需为 4-8 位数字' });
+    let f = DB.families.find((x) => x.parentPin === pin);
+    let isNew = false;
+    if (!f) {
+      if (b.create === false) return send(res, 200, { ok: false, error: 'PIN 不存在' });
+      f = newFamily(pin);
+      DB.families.push(f);
+      save();
+      isNew = true;
+    }
+    return send(res, 200, { ok: true, familyId: f.id, isNew });
+  }
+
+  // 其余端点都需要 X-Family-Id
+  const family = getFamily(req);
+  if (!family) return send(res, 401, { error: 'no family' });
+
   if (pathname === '/api/children' && method === 'GET') {
-    return send(res, 200, DB.children);
+    return send(res, 200, family.children);
   }
   if (pathname === '/api/children' && method === 'POST') {
     const b = await readBody(req);
     const child = { id: rid(), name: String(b.name || '小朋友').slice(0, 12), avatar: b.avatar || AVATARS[0], grade: b.grade || 1, points: 0, dailyPoints: { date: todayKey(), earned: 0 }, createdAt: new Date().toISOString() };
-    DB.children.push(child); save();
+    family.children.push(child); save();
     return send(res, 200, child);
   }
   if (pathname.startsWith('/api/child/') && segs[2]) {
     const id = segs[2];
-    if (method === 'GET') return send(res, 200, childSummary(id));
+    if (method === 'GET') return send(res, 200, childSummary(family, id));
     if (method === 'DELETE') {
-      DB.children = DB.children.filter((c) => c.id !== id);
-      DB.attempts = DB.attempts.filter((a) => a.childId !== id);
-      DB.sessions = DB.sessions.filter((s) => s.childId !== id);
-      DB.redemptions = DB.redemptions.filter((r) => r.childId !== id);
-      DB.pointsLedger = DB.pointsLedger.filter((l) => l.childId !== id);
+      family.children = family.children.filter((c) => c.id !== id);
+      family.attempts = family.attempts.filter((a) => a.childId !== id);
+      family.sessions = family.sessions.filter((s) => s.childId !== id);
+      family.redemptions = family.redemptions.filter((r) => r.childId !== id);
+      family.pointsLedger = family.pointsLedger.filter((l) => l.childId !== id);
       save(); return send(res, 200, { ok: true });
     }
     if (method === 'PUT') {
       const b = await readBody(req);
-      const c = DB.children.find((x) => x.id === id);
+      const c = family.children.find((x) => x.id === id);
       if (!c) return send(res, 404, { error: 'child not found' });
       if (b.grade !== undefined && b.grade >= 1 && b.grade <= 6) c.grade = b.grade;
       if (b.name !== undefined) c.name = String(b.name).slice(0, 12);
@@ -285,17 +342,17 @@ async function handleApi(req, res, pathname, segs) {
     }
   }
 
-  if (pathname === '/api/rewards' && method === 'GET') return send(res, 200, DB.rewards);
+  if (pathname === '/api/rewards' && method === 'GET') return send(res, 200, family.rewards);
   if (pathname === '/api/rewards' && method === 'POST') {
     const b = await readBody(req);
-    const reward = { id: rid(), name: String(b.name || '礼品').slice(0, 20), icon: b.icon || '🎁', cost: Math.max(0, Number(b.cost) || 0), active: b.active !== false, sort: DB.rewards.length };
-    DB.rewards.push(reward); save(); return send(res, 200, reward);
+    const reward = { id: rid(), name: String(b.name || '礼品').slice(0, 20), icon: b.icon || '🎁', cost: Math.max(0, Number(b.cost) || 0), active: b.active !== false, sort: family.rewards.length };
+    family.rewards.push(reward); save(); return send(res, 200, reward);
   }
   if (segs[1] === 'rewards' && segs[2] && (method === 'PUT' || method === 'DELETE')) {
     const id = segs[2];
     if (method === 'PUT') {
       const b = await readBody(req);
-      const r = DB.rewards.find((x) => x.id === id);
+      const r = family.rewards.find((x) => x.id === id);
       if (!r) return send(res, 404, { error: 'not found' });
       if (b.name !== undefined) r.name = String(b.name).slice(0, 20);
       if (b.icon !== undefined) r.icon = b.icon;
@@ -304,68 +361,69 @@ async function handleApi(req, res, pathname, segs) {
       if (b.sort !== undefined) r.sort = b.sort;
       save(); return send(res, 200, r);
     }
-    DB.rewards = DB.rewards.filter((x) => x.id !== id); save(); return send(res, 200, { ok: true });
+    family.rewards = family.rewards.filter((x) => x.id !== id); save(); return send(res, 200, { ok: true });
   }
 
   if (pathname === '/api/session' && method === 'POST') {
     const b = await readBody(req);
-    return send(res, 200, computeSession(b));
+    return send(res, 200, computeSession(family, b));
   }
   if (pathname === '/api/correction' && method === 'POST') {
     const b = await readBody(req);
-    return send(res, 200, doCorrection(b));
+    return send(res, 200, doCorrection(family, b));
   }
   if (pathname === '/api/redeem' && method === 'POST') {
     const b = await readBody(req);
-    return send(res, 200, doRedeem(b));
+    return send(res, 200, doRedeem(family, b));
   }
   if (pathname === '/api/checkpin' && method === 'POST') {
     const b = await readBody(req);
-    return send(res, 200, { ok: String(b.pin) === String(DB.parentPin) });
+    return send(res, 200, { ok: String(b.pin) === String(family.parentPin) });
   }
   if (pathname === '/api/pin' && method === 'PUT') {
     const b = await readBody(req);
-    if (String(b.oldPin) !== String(DB.parentPin)) return send(res, 200, { ok: false, error: 'old pin wrong' });
-    DB.parentPin = String(b.newPin || '').slice(0, 12) || DB.parentPin; save();
+    if (String(b.oldPin) !== String(family.parentPin)) return send(res, 200, { ok: false, error: 'old pin wrong' });
+    const newPin = String(b.newPin || '').trim();
+    if (!PIN_RE.test(newPin)) return send(res, 200, { ok: false, error: '新 PIN 需为 4-8 位数字' });
+    if (DB.families.find((f) => f.parentPin === newPin && f.id !== family.id)) {
+      return send(res, 200, { ok: false, error: '新 PIN 已被其他家庭使用' });
+    }
+    family.parentPin = newPin; save();
     return send(res, 200, { ok: true });
   }
   if (pathname.startsWith('/api/redemptions/') && segs[2]) {
     const id = segs[2];
-    if (method === 'PUT') { // 家长标记已兑现
-      const r = DB.redemptions.find((x) => x.id === id);
+    if (method === 'PUT') {
+      const r = family.redemptions.find((x) => x.id === id);
       if (!r) return send(res, 404, { error: 'not found' });
       r.fulfilled = true; save(); return send(res, 200, r);
     }
   }
   if (pathname === '/api/redemptions' && method === 'GET') {
-    const list = DB.redemptions.map((r) => {
-      const c = DB.children.find((x) => x.id === r.childId) || {};
-      const rw = DB.rewards.find((x) => x.id === r.rewardId) || {};
+    const list = family.redemptions.map((r) => {
+      const c = family.children.find((x) => x.id === r.childId) || {};
+      const rw = family.rewards.find((x) => x.id === r.rewardId) || {};
       return { id: r.id, childName: c.name || '?', rewardName: rw.name || '?', icon: rw.icon || '🎁', cost: rw.cost || 0, redeemedAt: r.redeemedAt, fulfilled: r.fulfilled };
     });
     return send(res, 200, list);
   }
 
-  // 版本号（前端轮询用，变化即刷新所有在线页面）
+  // 版本号（前端轮询用）
   if (pathname === '/api/version' && method === 'GET') {
     return send(res, 200, { version: APP_VERSION });
   }
 
-  // 一键更新：超级管理员密码校验后拉取最新代码并重启服务
+  // 一键更新（家庭作用域无关，超级管理员密码）
   if (pathname === '/api/admin/update' && method === 'POST') {
     const b = await readBody(req);
     if (String(b.password) !== SUPER_ADMIN) return send(res, 200, { ok: false, error: '超级管理员密码错误' });
     try {
-      // 容器内 bind mount 可能触发 Git safe.directory 检查，先放行（用 /root 作 cwd 避免鸡生蛋）
       try { execSync('git config --global --add safe.directory /app', { cwd: '/root' }); } catch (e2) { /* 已配置过则忽略 */ }
-      // 清理本地未提交改动（data 在卷里不会被 stash 影响），再拉取
       execSync('git stash --include-untracked || true', { cwd: __dirname });
       const out = execSync('git pull --ff-only', { cwd: __dirname }).toString();
       try { APP_VERSION = execSync('git rev-parse --short HEAD', { cwd: __dirname }).toString().trim(); } catch (e) {}
       save();
-      // 区分是否有新代码：未变化时输出含 "Already up to date."
       const noChange = /Already up to date\./.test(out);
-      // 先返回结果，再由 Docker（restart: unless-stopped）自动重启容器以加载新代码
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: true, version: APP_VERSION, output: out, noChange }));
       if (!noChange) setTimeout(() => process.exit(0), 600);

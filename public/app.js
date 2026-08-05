@@ -14,8 +14,23 @@
   let REWARDS = [];
 
   // ---------- 基础 ----------
+  // 当前家庭 ID（保存在 localStorage；多设备同家庭共享）
+  function getFamilyId() { return localStorage.getItem('math_family_id') || ''; }
+  function setFamilyId(id) {
+    if (id) localStorage.setItem('math_family_id', id);
+    else localStorage.removeItem('math_family_id');
+  }
   async function api(method, path, body) {
-    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const headers = { 'Content-Type': 'application/json' };
+    const fid = getFamilyId();
+    if (fid) headers['X-Family-Id'] = fid;
+    const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    if (r.status === 401) {
+      // 家庭失效（被删/数据迁移/换设备），清除并回到家庭登录页
+      setFamilyId('');
+      if (typeof renderFamilyAuth === 'function') renderFamilyAuth();
+      throw new Error('家庭身份失效，请重新加入家庭');
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   }
@@ -492,7 +507,7 @@
   function renderPinModal() {
     const mask = document.createElement('div'); mask.className = 'modal-mask'; mask.id = 'pinmask';
     mask.innerHTML = `<div class="modal"><h3>家长验证</h3>
-      <div class="field"><label>请输入 4 位 PIN</label><input id="pininput" type="password" inputmode="numeric" maxlength="12" placeholder="默认 1234"/></div>
+      <div class="field"><label>请输入家庭 PIN</label><input id="pininput" type="password" inputmode="numeric" maxlength="8" placeholder="请输入 PIN" autocomplete="off"/></div>
       <button class="btn btn-primary btn-block" onclick="submitPin()">进入</button>
       <button class="btn btn-ghost btn-block" onclick="closeModal()">取消</button></div>`;
     document.body.appendChild(mask);
@@ -595,7 +610,10 @@
       <div class="field"><label>旧 PIN</label><input id="oldpin" type="password" inputmode="numeric"/></div>
       <div class="field"><label>新 PIN</label><input id="newpin" type="password" inputmode="numeric"/></div>
       <button class="btn btn-primary btn-block" onclick="doChangePin()">保存</button>
-      <p class="muted center">默认 PIN 为 1234，请务必修改。</p></div>
+      <p class="muted center">PIN 需为 4-8 位数字。</p></div>
+      <div class="panel" style="margin-top:14px"><h3 style="text-align:center;color:var(--purple)">家庭</h3>
+      <p class="muted center">当前家庭 ID：<code style="font-size:11px;color:#666">${getFamilyId() ? getFamilyId().slice(0, 8) + '…' : '无'}</code></p>
+      <button class="btn btn-blue btn-block" onclick="switchFamily()">切换/退出家庭</button></div>
       <div class="panel" style="margin-top:14px"><h3 style="text-align:center;color:var(--purple)">系统更新</h3>
       <p class="muted center">从 GitHub 拉取最新版本，所有打开的页面会自动刷新。</p>
       <button class="btn btn-coral btn-block" onclick="openUpdate()">🔄 一键更新系统</button></div>`;
@@ -695,18 +713,81 @@
   function backHome() { renderHome(); }
 
   // ---------- 启动 ----------
+  // 家庭认证页：输入家庭 PIN（加入已有家庭），或选择"创建新家庭"
+  async function renderFamilyAuth() {
+    let state = { hasFamilies: false };
+    try { state = await fetch('/api/auth/state').then((r) => r.json()); } catch (e) { state = { hasFamilies: false }; }
+    document.body.style.background = '';
+    $app.innerHTML = `
+      <div class="welcome">
+        <div class="welcome-emoji">🏠</div>
+        <h1 class="title">算术小乐园</h1>
+        <p class="subtitle">${state.hasFamilies ? '输入家庭 PIN 加入已有家庭' : '首次使用，输入 PIN 创建你的家庭'}</p>
+        <div class="panel" style="max-width:380px;margin:16px auto">
+          <div class="field"><label>家庭 PIN（4-8 位数字）</label>
+            <input id="fampin" type="password" inputmode="numeric" maxlength="8" placeholder="例如 1234" autocomplete="off"/></div>
+          <button class="btn btn-primary btn-block" onclick="submitFamilyPin(${state.hasFamilies})">${state.hasFamilies ? '加入家庭' : '创建家庭'}</button>
+          ${state.hasFamilies ? '<button class="btn btn-blue btn-block" onclick="submitFamilyPin(false)">用此 PIN 创建新家庭</button>' : ''}
+          <p class="muted center" id="famauthmsg" style="min-height:18px;margin-top:8px"></p>
+        </div>
+        <p class="muted center" style="margin-top:8px">同一个 PIN 在多台设备（手机/Pad）登录即可共享同一家庭</p>
+      </div>`;
+    const pinInput = document.getElementById('fampin');
+    if (pinInput) pinInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitFamilyPin(state.hasFamilies);
+    });
+    setTimeout(() => pinInput && pinInput.focus(), 100);
+  }
+  async function submitFamilyPin(joinOnly) {
+    const pin = document.getElementById('fampin').value.trim();
+    const msg = document.getElementById('famauthmsg');
+    if (!/^\d{4,8}$/.test(pin)) { msg.textContent = 'PIN 需为 4-8 位数字'; return; }
+    msg.textContent = '正在处理…';
+    try {
+      const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, create: joinOnly ? false : true }) });
+      const data = await r.json();
+      if (!data.ok) { msg.textContent = data.error || '失败'; return; }
+      setFamilyId(data.familyId);
+      msg.textContent = data.isNew ? '✅ 家庭已创建' : '✅ 已加入家庭';
+      setTimeout(() => init(), 400);
+    } catch (e) {
+      msg.textContent = '网络错误，请重试';
+    }
+  }
+  function switchFamily() {
+    if (!confirm('确定要切换到其他家庭吗？当前家庭的数据保留，再次输入 PIN 即可回来。')) return;
+    setFamilyId('');
+    localStorage.removeItem('math_role');
+    document.querySelectorAll('.modal-mask').forEach((m) => m.remove());
+    renderFamilyAuth();
+  }
+
   async function init() {
-    CHILDREN = await api('GET', '/api/children');
+    const fid = getFamilyId();
+    if (!fid) {
+      // 没家庭身份 → 显示家庭登录/创建
+      renderFamilyAuth();
+      return;
+    }
+    // 验证 familyId 是否有效：尝试拉一次数据，401 时退回登录页
+    try {
+      CHILDREN = await api('GET', '/api/children');
+    } catch (e) {
+      // api() 内部已经处理过 401，这里兜底
+      if (!getFamilyId()) return; // 已经在 renderFamilyAuth 了
+      setFamilyId('');
+      renderFamilyAuth();
+      return;
+    }
     REWARDS = await api('GET', '/api/rewards');
     const savedRole = localStorage.getItem('math_role');
     if (savedRole === 'parent') { openParent(); }
     else if (savedRole === 'child') {
-      // 孩子入口：单个直接进菜单，多个显示选人
       if (CHILDREN.length === 1) { S.child = CHILDREN[0]; renderChildMenu(); }
       else { renderHome(); }
     }
-    else { renderRoleSelect(); } // 首次进入，让用户选
-    pollVersion(); // 启动版本轮询，一键更新后自动刷新所有页面
+    else { renderRoleSelect(); }
+    pollVersion();
   }
 
   Object.assign(window, {
@@ -719,6 +800,7 @@
     openEditGrade, pickNewGrade, saveGrade, closeGradeMask,
     enterAsChild, enterAsParent, switchToParent, switchToChild,
     openUpdate, closeUpdate, doUpdate,
+    renderFamilyAuth, submitFamilyPin, switchFamily,
   });
 
   init();
