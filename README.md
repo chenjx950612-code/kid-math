@@ -19,7 +19,7 @@
 
 ```bash
 node server.js
-# 打开 http://localhost:3000
+# 打开 http://localhost:3333
 ```
 
 默认家长 PIN：`1234`（首次进入家长面板后请修改）。
@@ -32,12 +32,12 @@ node server.js
 1. **上传项目**：在飞牛「File Station」里新建一个文件夹（如 `kid-math`），把本项目**除 `data/` 以外的所有文件**上传进去（重点：`server.js`、`package.json`、`Dockerfile`、`docker-compose.yml`、`public/` 整个目录）。
 2. **构建镜像**：打开飞牛「Docker / 容器管理 → 镜像 → 构建」，选择上传目录里的 `Dockerfile`，镜像名填 `kid-math`，开始构建（约 1~2 分钟，取决于网络拉取 node:18-alpine）。
 3. **创建容器**：基于 `kid-math` 镜像新建容器：
-   - 端口映射：`3000` → `3000`（容器 3000 映射到 NAS 3000）
-   - 存储/卷挂载：把 NAS 上的项目目录下 `data` 文件夹挂载到容器 `/app/data`，孩子进度、积分、礼品都存 NAS 本地，容器删了数据也不丢
+   - 端口映射：`3333` → `3333`（容器 3333 映射到 NAS 3333）
+   - 存储/卷挂载：把**整个项目目录**以「绑定挂载」方式挂到容器 `/app`，再把 `data` 单独挂为数据卷（compose 已配置好）。这样「一键更新」时 `git pull` 会直接写回 NAS 目录，容器重启即加载新代码。
    - 重启策略：选「始终重启」或 `unless-stopped`
-   - 环境变量（可选）：`PORT=3000`、`HOST=0.0.0.0`
-4. **启动容器**，点「终端 / 日志」确认打印 `已启动: http://0.0.0.0:3000`。
-5. 同局域网的电脑/平板访问 `http://<飞牛内网IP>:3000` 验证能打开。
+   - 环境变量（可选）：`PORT=3333`、`HOST=0.0.0.0`、`SUPER_ADMIN_PASSWORD=061204`（一键更新的超级管理员密码，可在此改）
+4. **启动容器**，点「终端 / 日志」确认打印 `已启动: http://0.0.0.0:3333`。
+5. 同局域网的电脑/平板访问 `http://<飞牛内网IP>:3333` 验证能打开。
 
 ### 方式二：SSH 命令行（一步到位）
 
@@ -71,3 +71,22 @@ public/
   app.js             # 前端逻辑（路由 / 状态 / 接口调用 / 渲染）
 Dockerfile / docker-compose.yml
 ```
+
+## 一键更新（从 GitHub 拉最新版本）
+
+家长面板「⚙️ 设置 → 🔄 一键更新系统」中输入**超级管理员密码**（默认 `061204`，可在 docker-compose 环境变量 `SUPER_ADMIN_PASSWORD` 修改），点击后服务端会：
+
+1. 校验密码 →
+2. 在项目目录执行 `git pull --ff-only` 拉取最新代码 →
+3. 退出进程，由容器的 `restart: unless-stopped` 自动重启并加载新代码。
+
+**所有已打开的网页会自动刷新**：前端每 15 秒轮询 `/api/version`，发现版本号变化即 `reload()`，因此正在用的孩子 / 家长页面会无缝更新到最新版。
+
+### 飞牛上让一键更新生效的前提
+- 项目必须是 **git 仓库**（`git clone` 或 `git init` 后 `git remote add origin <你的仓库地址>`）。
+- 容器代码须用 **bind mount**（`./:/app`，compose 已配置），而不是把代码 `COPY` 进镜像——否则 `git pull` 无法持久化。
+- 容器内能访问 GitHub（公网可达即可；若 GitHub 慢，也可改用 Gitee 镜像）。
+- 首次把代码放到飞牛后记得 `git remote add origin <仓库地址>` 并 `git pull` 一次，保证本地与远程同步。
+
+修改 `SUPER_ADMIN_PASSWORD` 后需重建容器（`docker compose down && docker compose up -d --build`）。
+
