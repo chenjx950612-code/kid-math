@@ -1,0 +1,1 @@
+{"name": "算术小乐园", "short_name": "算术小乐园", "icons": [{"src": "/icon.png", "sizes": "192x192", "type": "image/png"}, {"src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}], "start_url": "/", "display": "standalone"}

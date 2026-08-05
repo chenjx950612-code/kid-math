@@ -336,8 +336,10 @@
           <div class="stat"><span>答对</span><span>${correct} / ${total}</span></div>
           <div class="stat"><span>正确率</span><span>${acc}%</span></div>
           <div class="stat"><span>本次获得</span><span>⭐ ${earned > 0 ? '+' + earned : earned}</span></div>
+          <div class="stat"><span>今日累计</span><span>⭐ ${(res.dailyEarned ?? 0)} / ${(res.dailyCap ?? 100)}</span></div>
           <div class="stat"><span>我的积分</span><span>⭐ ${points}</span></div>
         </div>
+        ${res.dailyCapReached ? `<div class="card" style="max-width:360px;margin:14px auto;background:linear-gradient(135deg,#fff3e0,#ffe0b2);border:2px dashed #ff9800"><p style="text-align:center;color:#e65100;font-weight:bold;margin:0;padding:10px 0">⚠️ 今日积分已封顶（100分），明天再来吧～</p></div>` : ''}
         <button class="btn btn-primary btn-block" style="max-width:360px;margin:12px auto" onclick="selectMode('${S.mode}')">再练一次</button>
         <button class="btn btn-blue btn-block" style="max-width:360px;margin:8px auto" onclick="selectModule('${S.module.id}')">换一关</button>
         <button class="btn btn-coral btn-block" style="max-width:360px;margin:8px auto" onclick="gotoStore()">去礼品店</button>
@@ -383,7 +385,10 @@
     }
     if (correct) {
       api('POST', '/api/correction', { childId: S.child.id, questionText: e.questionText, correct: true }).then(r => {
-        S.child.points = r.points; toast('订正正确 +1 ⭐'); gotoWrong();
+        S.child.points = r.points;
+        if (r.dailyCapped) toast('⚠️ 今日积分已封顶（100分），明天再来吧～');
+        else toast('订正正确 +1 ⭐');
+        gotoWrong();
       });
     } else {
       toast('再想想哦~'); S.correctionGiven = ''; updateAns();

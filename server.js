@@ -32,6 +32,25 @@ const DEFAULT_REWARDS = [
 
 const AVATARS = ['🐱', '🐶', '🐰', '🦊', '🐼', '🦁', '🐯', '🐸', '🐵', '🐥'];
 
+// 每日积分上限（防止一天刷太多）
+const DAILY_CAP = 100;
+
+// 获取本地日期字符串 YYYY-MM-DD（用于每日重置）
+function todayKey() {
+  const d = new Date();
+  const off = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - off).toISOString().slice(0, 10);
+}
+
+// 获取/初始化孩子的每日积分记录
+function getDaily(child) {
+  const t = todayKey();
+  if (!child.dailyPoints || child.dailyPoints.date !== t) {
+    child.dailyPoints = { date: t, earned: 0 };
+  }
+  return child.dailyPoints;
+}
+
 function rid() { return crypto.randomUUID(); }
 
 function load() {
@@ -63,24 +82,38 @@ function computeSession(body) {
   const child = DB.children.find((c) => c.id === childId);
   if (!child) return { error: 'child not found' };
 
-  let earned = 0;
+  let pointsDelta = 0;       // 实际加到 child.points 的值
   const ledger = [];
   const sessionAttempts = [];
   let correctCount = 0;
+  const daily = getDaily(child);
+  let dailyCapped = false;
 
   for (const q of questions) {
     const correct = !!q.correct;
     let delta = correct ? 2 : -1; // 基础：对+2 错-1（允许负数）
-    ledger.push({ reason: correct ? 'correct' : 'wrong', delta });
-    if (correct) correctCount++;
 
+    // 计时模式速度奖励
     if (mode === 'timed' && correct) {
       let bonus = 0;
       if (q.responseMs <= 3000) bonus = 2;
       else if (q.responseMs <= 6000) bonus = 1;
-      if (bonus > 0) { delta += bonus; ledger.push({ reason: 'speed_bonus', delta: bonus }); }
+      if (bonus > 0) delta += bonus;
     }
-    earned += delta;
+
+    // 每日上限：只对正积分做限制
+    if (delta > 0) {
+      const room = DAILY_CAP - daily.earned;
+      if (room <= 0) { delta = 0; dailyCapped = true; }
+      else if (delta > room) { delta = room; dailyCapped = true; }
+    }
+    if (delta > 0) daily.earned += delta;
+
+    const reason = correct ? 'correct' : 'wrong';
+    ledger.push({ reason, delta });
+    if (correct) correctCount++;
+    pointsDelta += delta;
+
     sessionAttempts.push({
       id: rid(), sessionId: null, childId,
       questionText: q.text, answer: String(q.given === null ? '' : q.given),
@@ -88,13 +121,21 @@ function computeSession(body) {
     });
   }
 
+  // 闯关达标奖励（也受每日上限约束）
   let challengeBonus = 0;
   if (mode === 'challenge') {
     const acc = questions.length ? correctCount / questions.length : 0;
-    if (acc >= 0.8) { challengeBonus = 10; ledger.push({ reason: 'challenge_clear', delta: 10 }); earned += 10; }
+    if (acc >= 0.8) {
+      let bonus = 10;
+      const room = DAILY_CAP - daily.earned;
+      if (room <= 0) { bonus = 0; dailyCapped = true; }
+      else if (bonus > room) { bonus = room; dailyCapped = true; }
+      if (bonus > 0) { daily.earned += bonus; pointsDelta += bonus; ledger.push({ reason: 'challenge_clear', delta: bonus }); }
+      challengeBonus = bonus;
+    }
   }
 
-  child.points += earned;
+  child.points += pointsDelta;
   const sessionId = rid();
   DB.sessions.push({
     id: sessionId, childId, moduleId, moduleName, mode,
@@ -106,7 +147,11 @@ function computeSession(body) {
     DB.pointsLedger.push({ id: rid(), childId, delta: l.delta, reason: l.reason, refId: sessionId, createdAt: new Date().toISOString() });
   }
   save();
-  return { earned, total: questions.length, correct: correctCount, challengeBonus, points: child.points };
+  return {
+    earned: pointsDelta, total: questions.length, correct: correctCount,
+    challengeBonus, points: child.points,
+    dailyCapReached: dailyCapped, dailyEarned: daily.earned, dailyCap: DAILY_CAP,
+  };
 }
 
 function doCorrection(body) {
@@ -114,12 +159,23 @@ function doCorrection(body) {
   const child = DB.children.find((c) => c.id === childId);
   if (!child) return { error: 'child not found' };
   if (correct) {
-    child.points += 1; // 订正正确 +1
-    DB.pointsLedger.push({ id: rid(), childId, delta: 1, reason: 'correct_correction', refId: questionText, createdAt: new Date().toISOString() });
+    const daily = getDaily(child);
+    const room = DAILY_CAP - daily.earned;
+    let delta = 0;
+    let capped = false;
+    if (room > 0) {
+      delta = 1; daily.earned += 1;
+      if (room <= 1) capped = true;
+    } else {
+      capped = true;
+    }
+    child.points += delta;
+    DB.pointsLedger.push({ id: rid(), childId, delta, reason: 'correct_correction', refId: questionText, createdAt: new Date().toISOString() });
     DB.corrections[childId + '|' + questionText] = true; // 订正正确后移出错题本
     save();
+    return { delta, points: child.points, dailyCapped: capped, dailyEarned: daily.earned, dailyCap: DAILY_CAP };
   }
-  return { delta: correct ? 1 : 0, points: child.points };
+  return { delta: 0, points: child.points, dailyCapped: false, dailyEarned: getDaily(child).earned, dailyCap: DAILY_CAP };
 }
 
 function doRedeem(body) {
@@ -203,7 +259,7 @@ async function handleApi(req, res, pathname, segs) {
   }
   if (pathname === '/api/children' && method === 'POST') {
     const b = await readBody(req);
-    const child = { id: rid(), name: String(b.name || '小朋友').slice(0, 12), avatar: b.avatar || AVATARS[0], grade: b.grade || 1, points: 0, createdAt: new Date().toISOString() };
+    const child = { id: rid(), name: String(b.name || '小朋友').slice(0, 12), avatar: b.avatar || AVATARS[0], grade: b.grade || 1, points: 0, dailyPoints: { date: todayKey(), earned: 0 }, createdAt: new Date().toISOString() };
     DB.children.push(child); save();
     return send(res, 200, child);
   }
