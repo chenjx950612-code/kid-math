@@ -131,6 +131,7 @@ story.append(bullets([
     '多台设备、多个家长输入同一 PIN = 同一个家庭 = 同一份数据。',
 ]))
 story.append(callout('💡 提示：PIN 是全局唯一的。如果两个家庭恰好想用同一个 PIN，系统会拒绝后者。旧版数据（若有）会在首次启动时自动迁移进一个默认家庭。'))
+story.append(callout('🔓 保持登录：家长 PIN 只需在本机验证一次，之后系统会记住登录状态，手机 / 平板从后台切回或重新打开都不再要求输入 PIN。若要把设备交给孩子或借给他人，请在「设置 → 切换/退出家庭」中退出，下次打开将重新要求 PIN。', bg=colors.HexColor('#e8f0ff'), border=TEAL))
 story.append(PageBreak())
 
 # 3. 家长面板

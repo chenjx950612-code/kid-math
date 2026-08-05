@@ -503,19 +503,25 @@
   function closeGradeMask() { const m = document.getElementById('grademask'); if (m) m.remove(); }
 
   // ---------- 家长面板 ----------
-  function openParent() { S.pinOk = false; renderPinModal(); }
+  // 本机是否已记住家长登录（绑定当前家庭 ID，换家庭自动失效）
+  function isParentAuthed() { return localStorage.getItem('math_parent_auth') === getFamilyId(); }
+  function openParent() {
+    if (isParentAuthed()) { S.pinOk = true; renderParent(); return; }
+    S.pinOk = false; renderPinModal();
+  }
   function renderPinModal() {
     const mask = document.createElement('div'); mask.className = 'modal-mask'; mask.id = 'pinmask';
     mask.innerHTML = `<div class="modal"><h3>家长验证</h3>
       <div class="field"><label>请输入家庭 PIN</label><input id="pininput" type="password" inputmode="numeric" maxlength="8" placeholder="请输入 PIN" autocomplete="off"/></div>
       <button class="btn btn-primary btn-block" onclick="submitPin()">进入</button>
-      <button class="btn btn-ghost btn-block" onclick="closeModal()">取消</button></div>`;
+      <button class="btn btn-ghost btn-block" onclick="closeModal()">取消</button>
+      <p class="muted center" style="margin-top:6px">验证一次后本机记住登录，下次打开免输入</p></div>`;
     document.body.appendChild(mask);
   }
   async function submitPin() {
     const v = document.getElementById('pininput').value;
     const r = await api('POST', '/api/checkpin', { pin: v });
-    if (r.ok) { S.pinOk = true; closeModal(); renderParent(); }
+    if (r.ok) { S.pinOk = true; localStorage.setItem('math_parent_auth', getFamilyId()); closeModal(); renderParent(); }
     else toast('PIN 不对');
   }
   function closeModal() { const m = document.getElementById('pinmask'); if (m) m.remove(); }
@@ -758,6 +764,7 @@
     if (!confirm('确定要切换到其他家庭吗？当前家庭的数据保留，再次输入 PIN 即可回来。')) return;
     setFamilyId('');
     localStorage.removeItem('math_role');
+    localStorage.removeItem('math_parent_auth');
     document.querySelectorAll('.modal-mask').forEach((m) => m.remove());
     renderFamilyAuth();
   }
