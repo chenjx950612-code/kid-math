@@ -90,3 +90,45 @@ Dockerfile / docker-compose.yml
 
 修改 `SUPER_ADMIN_PASSWORD` 后需重建容器（`docker compose down && docker compose up -d --build`）。
 
+## 飞牛 NAS 部署操作清单（可复制）
+
+以下命令在飞牛的 **SSH 终端** 里执行（飞牛「设置 → 服务 → SSH」开启后用终端连上：`ssh 你的用户名@飞牛内网IP`）。
+
+### 1. 把代码 git clone 到飞牛（关键：用 clone 而非手动传文件，一键更新才有效）
+```bash
+# 进到你想放项目的目录，例如 /vol1/1000/docker
+cd /vol1/1000/docker
+git clone https://github.com/chenjx950612-code/kid-math.git
+cd kid-math
+```
+
+### 2. 启动容器（首次会拉取 node:18-alpine 并构建，约 1~2 分钟）
+```bash
+docker compose up -d --build
+```
+
+### 3. 验证
+```bash
+docker ps                 # 看到 kid-math 容器状态 Up 即可
+curl http://localhost:3333/api/version   # 能看到 {"version":"xxxx"} 说明正常
+```
+飞牛内网浏览器或同局域网设备访问 `http://飞牛内网IP:3333` 验证页面能打开。
+
+### 4. 外网访问（域名 + HTTPS，可选）
+1. 域名 A 记录指向家里**公网 IP**（动态 IP 用飞牛自带 DDNS 或花生壳）。
+2. 路由器做端口转发：把 `443` 转发到飞牛反代端口；或直接让飞牛反代监听 443。
+3. 飞牛「反向代理」或装 **Nginx Proxy Manager**：
+   - 新增代理主机，域名填你的域名
+   - 转发到 `http://飞牛内网IP:3333`
+   - 开启 SSL，用 Let's Encrypt 申请免费证书
+4. 之后用 `https://你的域名` 访问，所有设备同源同步。
+
+### 5. 日后升级代码（二选一）
+- **一键更新（推荐，在网页里点）**：家长面板「⚙️ 设置 → 🔄 一键更新系统」输超级管理员密码即可，所有打开的页面会自动刷新。
+- **手动重建**：`docker compose down && docker compose up -d --build`（数据在 `math_data` 卷里，不丢）。
+
+### 6. 首次上线必改
+- 家长 PIN 默认 `1234` → 家长面板「⚙️ 设置」里改掉。
+- 一键更新超级管理员密码默认 `061204` → 改 docker-compose 的 `SUPER_ADMIN_PASSWORD` 后执行 `docker compose down && docker compose up -d --build`。
+
+
