@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  math:
+    build: .
+    container_name: kid-math
+    restart: unless-stopped
+    ports:
+      - "3333:3333"
+    volumes:
+      # 代码用绑定挂载：一键更新时 git pull 会写回宿主机目录，容器重启即加载新代码
+      - ./:/app
+      # 数据单独成卷（独立于代码挂载，避免被代码挂载覆盖）
+      - math_data:/app/data
+    environment:
+      - PORT=3333
+      - HOST=0.0.0.0
+      # 一键更新的超级管理员密码（可在此修改，不必改代码）
+      - SUPER_ADMIN_PASSWORD=061204
+
+volumes:
+  math_data:

@@ -1,0 +1,7 @@
+node_modules
+data
+.workbuddy
+.git
+*.md
+.gitignore
+test_api.mjs

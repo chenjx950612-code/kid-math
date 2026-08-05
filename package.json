@@ -1,0 +1,13 @@
+{
+  "name": "kid-math-practice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "小学算术练习系统 - 儿童友好的家庭算术练习（自托管于飞牛 NAS）",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
