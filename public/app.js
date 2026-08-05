@@ -625,7 +625,6 @@
       <p class="muted center">当前家庭 ID：<code style="font-size:11px;color:#666">${getFamilyId() ? getFamilyId().slice(0, 8) + '…' : '无'}</code></p>
       <button class="btn btn-blue btn-block" onclick="switchFamily()">切换/退出家庭</button></div>
       <div class="panel" style="margin-top:14px"><h3 style="text-align:center;color:var(--purple)">系统更新</h3>
-      <p class="muted center">从 GitHub 拉取最新版本，所有打开的页面会自动刷新。</p>
       <button class="btn btn-coral btn-block" onclick="openUpdate()">🔄 一键更新系统</button></div>`;
   }
 
