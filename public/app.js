@@ -126,6 +126,8 @@
   }
   function switchToParent() {
     localStorage.setItem('math_role', 'parent');
+    // 从孩子界面切家长，必须验证 PIN（不走记住登录的快捷通道）
+    S.forcePin = true;
     openParent();
   }
   function switchToChild() {
@@ -506,7 +508,9 @@
   // 本机是否已记住家长登录（绑定当前家庭 ID，换家庭自动失效）
   function isParentAuthed() { return localStorage.getItem('math_parent_auth') === getFamilyId(); }
   function openParent() {
-    if (isParentAuthed()) { S.pinOk = true; renderParent(); return; }
+    // 从孩子界面切换时（forcePin=true），强制验证 PIN，不走记住登录
+    if (!S.forcePin && isParentAuthed()) { S.pinOk = true; renderParent(); return; }
+    S.forcePin = false; // 重置标记，下次 openParent 恢复正常逻辑
     S.pinOk = false; renderPinModal();
   }
   function renderPinModal() {
