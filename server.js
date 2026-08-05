@@ -130,30 +130,39 @@ function getFamily(req) {
 }
 
 // ---------- 业务：积分（家庭作用域） ----------
+// 积分规则（2026-08-05 更新）：
+//   练习/闯关：每答对一题 +1，答错不扣分（0）
+//   计时：≤3 秒答对 +2，>3 秒答对 +1，答错不扣分（0）
+//   闯关：正确率 ≥80% 通关 +10；正确率 100% 额外 +5（即共 +15）
+//   订正：不再加分（始终 0）
+// 所有正积分均计入「每日上限 100 分」
 function computeSession(family, body) {
   const { childId, moduleId, moduleName, mode, questions, durationSec } = body;
   const child = family.children.find((c) => c.id === childId);
   if (!child) return { error: 'child not found' };
 
   const daily = getDaily(child);
-  let pointsDelta = 0; // 本次「原始」净增减（对+2/错-1 + 计时/闯关加成）
+  let pointsDelta = 0; // 本次「原始」净增减（按新规则）
   const ledger = [];
   const sessionAttempts = [];
   let correctCount = 0;
 
   for (const q of questions) {
     const correct = !!q.correct;
-    let delta = correct ? 2 : -1; // 对+2 错-1
-
-    if (mode === 'timed' && correct) {
-      let bonus = 0;
-      if (q.responseMs <= 3000) bonus = 2;
-      else if (q.responseMs <= 6000) bonus = 1;
-      if (bonus > 0) delta += bonus;
+    let delta = 0;
+    if (correct) {
+      if (mode === 'timed') {
+        // 计时：≤3 秒 +2，>3 秒 +1
+        delta = q.responseMs <= 3000 ? 2 : 1;
+      } else {
+        // 练习 / 闯关：每对一题 +1
+        delta = 1;
+      }
+      correctCount++;
+    } else {
+      delta = 0; // 答错不扣分
     }
-
     ledger.push({ reason: correct ? 'correct' : 'wrong', delta });
-    if (correct) correctCount++;
     pointsDelta += delta;
 
     sessionAttempts.push({
@@ -166,11 +175,19 @@ function computeSession(family, body) {
   let challengeBonus = 0;
   if (mode === 'challenge') {
     const acc = questions.length ? correctCount / questions.length : 0;
-    if (acc >= 0.8) { challengeBonus = 10; pointsDelta += 10; ledger.push({ reason: 'challenge_clear', delta: 10 }); }
+    if (acc >= 0.8) {
+      challengeBonus = 10; // 通关奖励
+      pointsDelta += 10;
+      ledger.push({ reason: 'challenge_clear', delta: 10 });
+      if (correctCount === questions.length && questions.length > 0) {
+        challengeBonus += 5; // 100% 正确额外 +5
+        pointsDelta += 5;
+        ledger.push({ reason: 'challenge_full', delta: 5 });
+      }
+    }
   }
 
-  // 每日上限：按「实际净增积分」封顶（错题 -1 会减少净增，不会虚占额度）
-  // 这样孩子真实积分达到 100 才会封顶，有错题时不会提前被锁死
+  // 每日上限：按「实际净增积分」封顶（均为正分，错题 0 不占额度）
   const room = DAILY_CAP - daily.earned;
   let granted = pointsDelta;
   let dailyCapped = false;
@@ -200,23 +217,11 @@ function doCorrection(family, body) {
   const { childId, questionText, correct } = body;
   const child = family.children.find((c) => c.id === childId);
   if (!child) return { error: 'child not found' };
+  // 订正不再加分（无论对错），订正正确仍移出错题本
   if (correct) {
-    const daily = getDaily(child);
-    const room = DAILY_CAP - daily.earned;
-    let delta = 0;
-    let capped = false;
-    if (room > 0) {
-      delta = 1; daily.earned += 1;
-      if (room <= 1) capped = true;
-    } else {
-      capped = true;
-    }
-    child.points += delta;
-    family.pointsLedger.push({ id: rid(), childId, delta, reason: 'correct_correction', refId: questionText, createdAt: new Date().toISOString() });
     family.corrections[childId + '|' + questionText] = true;
-    save();
-    return { delta, points: child.points, dailyCapped: capped, dailyEarned: daily.earned, dailyCap: DAILY_CAP };
   }
+  save();
   return { delta: 0, points: child.points, dailyCapped: false, dailyEarned: getDaily(child).earned, dailyCap: DAILY_CAP };
 }
 

@@ -193,7 +193,7 @@
       <div class="grid">
         <div class="card module-card" onclick="selectMode('practice')"><div class="emoji">😊</div><div><div class="m-name">练习模式</div><div class="m-sub">对+2 错-1</div></div></div>
         <div class="card module-card" onclick="selectMode('timed')"><div class="emoji">⏱️</div><div><div class="m-name">计时模式</div><div class="m-sub">越快加分越多</div></div></div>
-        <div class="card module-card" onclick="selectMode('challenge')"><div class="emoji">🏆</div><div><div class="m-name">闯关模式</div><div class="m-sub">达标通关 +10</div></div></div>
+        <div class="card module-card" onclick="selectMode('challenge')"><div class="emoji">🏆</div><div><div class="m-name">闯关模式</div><div class="m-sub">达标通关 +10，全对 +15</div></div></div>
       </div>`;
   }
 
@@ -341,7 +341,7 @@
     const points = res.points ?? (S.child ? S.child.points : 0);
     const acc = total ? Math.round(correct / total * 100) : 0;
     let great;
-    if (res.challengeBonus) great = '🏆 通关啦！+10';
+    if (res.challengeBonus) great = `🏆 通关啦！+${res.challengeBonus}`;
     else if (acc === 100) great = '🌟 全对！';
     else if (acc >= 80) great = '👍 很棒！';
     else great = '💪 继续加油！';
