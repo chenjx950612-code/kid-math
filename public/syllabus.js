@@ -331,9 +331,9 @@ function genStats(m, diff, grade) {
     const [n1, n2] = pick(names);
     const a = rnd(3, hi), b = rnd(3, hi);
     let text, answer;
-    if (Math.random() < 0.4) { text = `统计发现：${n1}有 ${a} 个，${n2}有 ${b} 个，一共有几个？`; answer = a + b; }
-    else if (a >= b) { text = `统计发现：${n1}有 ${a} 个，${n2}有 ${b} 个，${n1}比${n2}多几个？`; answer = a - b; }
-    else { text = `统计发现：${n1}有 ${a} 个，${n2}有 ${b} 个，${n2}比${n1}多几个？`; answer = b - a; }
+    if (Math.random() < 0.4) { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，一共有几个？`; answer = a + b; }
+    else if (a >= b) { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，${n1}比${n2}多几个？`; answer = a - b; }
+    else { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，${n2}比${n1}多几个？`; answer = b - a; }
     return { text, answer, hint: '看图（数据），算一算', noEq: true };
   }
   // 中年级（3-4）：三类数据，求总数 / 最大最小差 / 平均
