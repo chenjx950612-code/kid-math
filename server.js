@@ -18,9 +18,8 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 // 一键更新：超级管理员密码（点击更新按钮时要求输入；可用环境变量 SUPER_ADMIN_PASSWORD 覆盖）
 const SUPER_ADMIN = process.env.SUPER_ADMIN_PASSWORD || '061204';
 
-// 卡密服务器（卖家提供）：创建家庭/续费/改PIN同步/定期校验时调用；为空则禁用在线激活
-const LICENSE_SERVER_URL = (process.env.LICENSE_SERVER_URL || '').trim().replace(/\/+$/, '');
-const LICENSE_CHECK_INTERVAL = 6 * 3600 * 1000; // 每 6 小时在线校验一次
+// 卡密授权：离线签名密钥（与 tools/genkey.cjs 保持一致；可用环境变量 LICENSE_SECRET 覆盖，两处需同步改）
+const LICENSE_SECRET = process.env.LICENSE_SECRET || 'kid-math-license-v1-2026';
 
 // 版本号：取当前 git 提交短哈希；非 git 环境回退为 local
 let APP_VERSION = 'local';
@@ -118,9 +117,8 @@ function load() {
     }
   }
 
-  // 卡密授权迁移：实例指纹（installationId）+ 旧家庭补默认 license（自家已有数据不被卡）
+  // 卡密授权迁移：旧家庭补默认 license（自家已有数据不被卡，2099 到期）
   let migrated = false;
-  if (!data.installationId) { data.installationId = crypto.randomUUID(); migrated = true; }
   for (const f of data.families) {
     if (!f.license) {
       f.license = { key: 'legacy', exp: new Date('2099-12-31T23:59:59Z').getTime(), valid: true, lastCheckedAt: null };
@@ -144,7 +142,7 @@ function getFamily(req) {
   return DB.families.find((f) => f.id === fid) || null;
 }
 
-// ---------- 卡密授权（license） ----------
+// ---------- 卡密授权（license，离线验签） ----------
 function licenseValid(f) {
   return !!f.license && f.license.valid !== false && f.license.exp > Date.now();
 }
@@ -152,53 +150,23 @@ function licenseDaysLeft(f) {
   return f.license ? Math.max(0, Math.ceil((f.license.exp - Date.now()) / 86400000)) : 0;
 }
 
-// 调用中心卡密服务器（离线/失败返回 {offline:true}）
-function callLicense(apiPath, body) {
-  return new Promise((resolve) => {
-    if (!LICENSE_SERVER_URL) return resolve({ offline: true, error: 'LICENSE_SERVER_URL 未配置' });
-    let url;
-    try { url = new URL(apiPath, LICENSE_SERVER_URL + '/'); } catch (e) { return resolve({ offline: true, error: 'LICENSE_SERVER_URL 无效' }); }
-    const mod = url.protocol === 'https:' ? require('https') : require('http');
-    const payload = JSON.stringify(body || {});
-    const req = mod.request(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
-      timeout: 8000,
-    }, (res) => {
-      let data = '';
-      res.on('data', (c) => (data += c));
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({ offline: true, error: 'bad response' }); } });
-    });
-    req.on('timeout', () => { req.destroy(); resolve({ offline: true, error: 'timeout' }); });
-    req.on('error', () => { req.destroy(); resolve({ offline: true, error: 'network' }); });
-    req.end(payload);
-  });
+// 本地验签离线卡密：MATH-XXXX-XXXX-XXXX；payload 为 8 字节 hex（exp 秒 + seq），返回 {exp(ms), seq}
+function verifyKey(rawKey) {
+  if (!rawKey) return null;
+  const s = String(rawKey).trim().replace(/^MATH-?/i, '').replace(/-/g, '');
+  const i = s.lastIndexOf('.');
+  if (i < 0) return null;
+  const b = s.slice(0, i).toLowerCase(), sig = s.slice(i + 1).toLowerCase();
+  const expect = crypto.createHmac('sha256', LICENSE_SECRET).update(b).digest('hex').slice(0, 32);
+  if (expect !== sig) return null;
+  try {
+    const buf = Buffer.from(b, 'hex');
+    if (buf.length !== 8) return null;
+    return { exp: buf.readUInt32BE(0) * 1000, seq: buf.readUInt32BE(4) };
+  } catch (e) { /* 解析失败视为无效 */ }
+  return null;
 }
 
-// 定期在线校验所有家庭（吊销/后台延期生效；网络失败时用本地 exp 兜底，宽容模式）
-async function verifyLicenses() {
-  if (!LICENSE_SERVER_URL) return;
-  for (const f of DB.families) {
-    if (!f.license || f.license.key === 'legacy') continue;
-    const r = await callLicense('/api/license/verify', { key: f.license.key, installationId: DB.installationId });
-    if (r && r.valid === false) {
-      if (f.license.valid !== false || (r.exp && f.license.exp !== r.exp)) {
-        f.license.valid = false;
-        if (r.exp) f.license.exp = r.exp;
-        f.license.lastCheckedAt = new Date().toISOString();
-        save();
-      }
-    } else if (r && r.valid === true) {
-      if (f.license.valid !== true || f.license.exp !== r.exp) {
-        f.license.valid = true;
-        f.license.exp = r.exp;
-        f.license.lastCheckedAt = new Date().toISOString();
-        save();
-      }
-    }
-    // offline/网络失败：保持本地状态继续可用
-  }
-}
 
 // ---------- 业务：积分（家庭作用域） ----------
 // 积分规则（2026-08-05 更新）：
@@ -384,15 +352,17 @@ async function handleApi(req, res, pathname, segs) {
     let isNew = false;
     if (!f) {
       if (b.create === false) return send(res, 200, { ok: false, error: 'PIN 不存在' });
-      // 创建家庭：一卡密一家庭，需在线激活并绑定（installationId + PIN）
+      // 创建家庭：一卡密一家庭，本地离线验签激活（卡密含有效期）
       const key = String(b.key || '').trim().toUpperCase();
       if (!key) return send(res, 200, { ok: false, error: '创建家庭需要激活卡密', licenseRequired: true });
-      if (!LICENSE_SERVER_URL) return send(res, 200, { ok: false, error: '系统未配置卡密服务器，无法创建新家庭，请联系卖家' });
-      const r = await callLicense('/api/license/activate', { key, pin, installationId: DB.installationId });
-      if (r.offline) return send(res, 200, { ok: false, error: '无法连接卡密服务器，请检查网络后重试' });
-      if (!r.ok) return send(res, 200, { ok: false, error: r.error || '卡密激活失败' });
+      const payload = verifyKey(key);
+      if (!payload) return send(res, 200, { ok: false, error: '卡密无效，请核对后重试' });
+      if (payload.exp <= Date.now()) return send(res, 200, { ok: false, error: '该卡密已过期，请联系卖家' });
+      // 同一卡密在本机只能绑定一个家庭（防止输不同 PIN 重复创建）
+      const dup = DB.families.find((x) => x.license && x.license.key === key);
+      if (dup) return send(res, 200, { ok: false, error: '此卡密已绑定家庭，请输入该家庭 PIN 加入' });
       f = newFamily(pin);
-      f.license = { key, exp: r.exp, valid: true, lastCheckedAt: new Date().toISOString() };
+      f.license = { key, exp: payload.exp, valid: true, lastCheckedAt: new Date().toISOString() };
       DB.families.push(f);
       save();
       isNew = true;
@@ -415,22 +385,19 @@ async function handleApi(req, res, pathname, segs) {
       exp: family.license ? family.license.exp : 0,
       daysLeft: licenseDaysLeft(family),
       keyTail,
-      installationId: DB.installationId,
-      licenseServer: !!LICENSE_SERVER_URL,
     });
   }
-  // 续费：换新卡密，覆盖绑定（不受过期拦截）
+  // 续费：输入新卡密，本地验签后覆盖（不受过期拦截）
   if (pathname === '/api/license/renew' && method === 'POST') {
     const b = await readBody(req);
     const key = String(b.key || '').trim().toUpperCase();
     if (!key) return send(res, 200, { ok: false, error: '请输入新卡密' });
-    if (!LICENSE_SERVER_URL) return send(res, 200, { ok: false, error: '系统未配置卡密服务器，请联系卖家' });
-    const r = await callLicense('/api/license/renew', { key, pin: String(family.parentPin), installationId: DB.installationId });
-    if (r.offline) return send(res, 200, { ok: false, error: '无法连接卡密服务器，请检查网络后重试' });
-    if (!r.ok) return send(res, 200, { ok: false, error: r.error || '续费失败' });
-    family.license = { key, exp: r.exp, valid: true, lastCheckedAt: new Date().toISOString() };
+    const payload = verifyKey(key);
+    if (!payload) return send(res, 200, { ok: false, error: '卡密无效，请核对后重试' });
+    if (payload.exp <= Date.now()) return send(res, 200, { ok: false, error: '该卡密已过期，无法续费' });
+    family.license = { key, exp: payload.exp, valid: true, lastCheckedAt: new Date().toISOString() };
     save();
-    return send(res, 200, { ok: true, exp: r.exp, daysLeft: Math.max(0, Math.ceil((r.exp - Date.now()) / 86400000)) });
+    return send(res, 200, { ok: true, exp: payload.exp, daysLeft: Math.max(0, Math.ceil((payload.exp - Date.now()) / 86400000)) });
   }
 
   // 版本号（前端轮询用，不受 license 拦截）
@@ -541,13 +508,8 @@ async function handleApi(req, res, pathname, segs) {
       return send(res, 200, { ok: false, error: '新 PIN 已被其他家庭使用' });
     }
     family.parentPin = newPin; save();
-    // 同步卡密绑定（尽力而为：失败不阻断本地修改，下次联网校验自动补）
-    let synced = true;
-    if (family.license && family.license.key !== 'legacy' && LICENSE_SERVER_URL) {
-      const r = await callLicense('/api/license/update-pin', { key: family.license.key, installationId: DB.installationId, pin: newPin });
-      synced = !r.offline && r.ok !== false;
-    }
-    return send(res, 200, { ok: true, synced });
+    // 离线方案：license 与 PIN 同存于家庭对象，改 PIN 后绑定自动跟随，无需额外同步
+    return send(res, 200, { ok: true });
   }
   if (pathname.startsWith('/api/redemptions/') && segs[2]) {
     const id = segs[2];
@@ -584,7 +546,3 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`小学算术练习系统已启动: http://${HOST}:${PORT}`);
 });
-
-// 卡密授权：启动 3 秒后异步在线校验一次（不阻塞启动），之后每 6 小时校验
-setTimeout(verifyLicenses, 3000);
-setInterval(verifyLicenses, LICENSE_CHECK_INTERVAL);

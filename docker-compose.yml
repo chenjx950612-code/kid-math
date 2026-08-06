@@ -17,8 +17,8 @@ services:
       - HOST=0.0.0.0
       # 一键更新的超级管理员密码（可在此修改，不必改代码）
       - SUPER_ADMIN_PASSWORD=061204
-      # 卡密服务器地址（卖家提供，用于激活/续费/校验）。
-      # 例如：https://lic.你的域名.com 或 http://服务器IP:4444；留空则无法创建新家庭
-      - LICENSE_SERVER_URL=${LICENSE_SERVER_URL:-}
+      # （可选）卡密签名密钥：默认与 tools/genkey.cjs 内置一致；若想自定义，
+      # 改这里并用相同值执行 node tools/genkey.cjs
+      # - LICENSE_SECRET=你的自定义密钥
 
 

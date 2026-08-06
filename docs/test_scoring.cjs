@@ -1,21 +1,21 @@
-// 端到端验证新积分规则（自包含：自动起卡密服务器 + 主系统，创建家庭需卡密）
+// 端到端验证新积分规则（自包含：自动起主系统，创建家庭需离线卡密）
 const http = require('http');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const NODE = process.execPath;
 const ROOT = path.join(__dirname, '..');
-const LIC_PORT = 4595;
 const APP_PORT = 3470;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'scoring-'));
+const SECRET = 'kid-math-license-v1-2026'; // 与 server.js 默认 LICENSE_SECRET 一致
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let licProc, appProc;
+let appProc;
 function boot() {
-  licProc = spawn(NODE, [path.join(ROOT, 'license-server', 'server.js')], { env: { ...process.env, PORT: String(LIC_PORT), DATA_DIR: path.join(TMP, 'lic'), ADMIN_PASSWORD: 'x' }, stdio: 'ignore' });
-  appProc = spawn(NODE, [path.join(ROOT, 'server.js')], { env: { ...process.env, PORT: String(APP_PORT), DATA_DIR: path.join(TMP, 'app'), LICENSE_SERVER_URL: 'http://127.0.0.1:' + LIC_PORT }, stdio: 'ignore' });
+  appProc = spawn(NODE, [path.join(ROOT, 'server.js')], { env: { ...process.env, PORT: String(APP_PORT), DATA_DIR: path.join(TMP, 'app') }, stdio: 'ignore' });
 }
 async function waitReady() {
   for (let i = 0; i < 40; i++) {
@@ -23,6 +23,15 @@ async function waitReady() {
     catch (e) { await sleep(250); }
   }
   throw new Error('服务未就绪');
+}
+// 内联发卡（与 tools/genkey.cjs 一致）
+function genKey(days = 365) {
+  const buf = Buffer.alloc(8);
+  buf.writeUInt32BE(Math.floor(Date.now() / 1000) + days * 86400, 0);
+  buf.writeUInt32BE(Date.now() % 0xffffffff, 4);
+  const b = buf.toString('hex');
+  const sig = crypto.createHmac('sha256', SECRET).update(b).digest('hex').slice(0, 32);
+  return ('MATH-' + (b + '.' + sig).replace(/(.{4})/g, '$1-').replace(/-$/, '')).toUpperCase();
 }
 
 function req(method, path, body, headers = {}) {
@@ -50,8 +59,8 @@ function assert(cond, msg) {
 (async () => {
   boot();
   await waitReady();
-  // 生成一张卡密用于创建家庭
-  const key = (await (await fetch(`http://localhost:${LIC_PORT}/api/admin/gen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'x', days: 365 }) })).json()).key;
+  // 生成一张离线卡密用于创建家庭
+  const key = genKey(365);
   // 加入家庭（create，需卡密）
   const auth = await req('POST', '/api/auth', { pin: '1234', create: true, key });
   const FID = auth.familyId;
@@ -123,7 +132,6 @@ function assert(cond, msg) {
 
   console.log('\n测试完成。');
 })().finally(() => {
-  try { licProc && licProc.kill(); } catch (e) {}
   try { appProc && appProc.kill(); } catch (e) {}
   fs.rmSync(TMP, { recursive: true, force: true });
 });

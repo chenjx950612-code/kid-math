@@ -1,6 +1,5 @@
 node_modules
 data
-license-server/data
 .workbuddy
 .git
 *.md
