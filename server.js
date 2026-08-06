@@ -175,10 +175,13 @@ function verifyKey(rawKey) {
 
 
 // ---------- 业务：积分（家庭作用域） ----------
-// 积分规则（2026-08-05 更新）：
+// 积分规则（2026-08-05 定，2026-08-06 闯关调整）：
 //   练习/闯关：每答对一题 +1，答错不扣分（0）
 //   计时：≤3 秒答对 +2，>3 秒答对 +1，答错不扣分（0）
-//   闯关：正确率 ≥80% 通关 +10；正确率 100% 额外 +5（即共 +15）
+//   闯关（按正确率分段）：
+//     - 正确率 < 80%：不通过，本次积分 +0（答对也不加分）
+//     - 正确率 ≥ 80% 且 < 100%：通过，按答对题数加分（无额外通关奖励）
+//     - 正确率 = 100%：全对，按答对题数 + 额外 +5
 //   订正：不再加分（始终 0）
 // 所有正积分均计入「每日上限 100 分」
 function computeSession(family, body) {
@@ -220,16 +223,17 @@ function computeSession(family, body) {
   let challengeBonus = 0;
   if (mode === 'challenge') {
     const acc = questions.length ? correctCount / questions.length : 0;
-    if (acc >= 0.8) {
-      challengeBonus = 10; // 通关奖励
-      pointsDelta += 10;
-      ledger.push({ reason: 'challenge_clear', delta: 10 });
-      if (correctCount === questions.length && questions.length > 0) {
-        challengeBonus += 5; // 100% 正确额外 +5
-        pointsDelta += 5;
-        ledger.push({ reason: 'challenge_full', delta: 5 });
-      }
+    if (acc < 0.8) {
+      // 不通过：本次积分全部作废（答对也不加分）
+      pointsDelta = 0;
+      for (const l of ledger) if (l.reason === 'correct') l.delta = 0;
+    } else if (correctCount === questions.length && questions.length > 0) {
+      // 全对：按答对题数（已计入）+ 额外 +5
+      challengeBonus = 5;
+      pointsDelta += 5;
+      ledger.push({ reason: 'challenge_full', delta: 5 });
     }
+    // 80% ≤ 正确率 < 100%：通过，仅按答对题数（已计入 pointsDelta），无额外奖励
   }
 
   // 每日上限：按「实际净增积分」封顶（均为正分，错题 0 不占额度）

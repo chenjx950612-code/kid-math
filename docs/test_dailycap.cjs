@@ -24,9 +24,10 @@ async function waitReady() {
 }
 // 内联发卡（与 tools/genkey.cjs 一致）
 function genKey(days = 365) {
-  const buf = Buffer.alloc(8);
-  buf.writeUInt32BE(Math.floor(Date.now() / 1000) + days * 86400, 0);
-  buf.writeUInt32BE(Date.now() % 0xffffffff, 4);
+  const buf = Buffer.alloc(9);
+  buf.writeUInt8(1, 0); // v1
+  buf.writeUInt32BE(days, 1);
+  buf.writeUInt32BE(Date.now() % 0xffffffff, 5);
   const b = buf.toString('hex');
   const sig = crypto.createHmac('sha256', SECRET).update(b).digest('hex').slice(0, 32);
   return ('MATH-' + (b + '.' + sig).replace(/(.{4})/g, '$1-').replace(/-$/, '')).toUpperCase();

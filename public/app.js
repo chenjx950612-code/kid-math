@@ -349,7 +349,9 @@
     const points = res.points ?? (S.child ? S.child.points : 0);
     const acc = total ? Math.round(correct / total * 100) : 0;
     let great;
-    if (res.challengeBonus) great = `🏆 通关啦！+${res.challengeBonus}`;
+    if (S.mode === 'challenge' && acc < 80) great = '😢 没通关，本次 0 分';
+    else if (S.mode === 'challenge' && res.challengeBonus) great = `🌟 全对！+${res.challengeBonus}`;
+    else if (S.mode === 'challenge') great = '🏆 通关啦！';
     else if (acc === 100) great = '🌟 全对！';
     else if (acc >= 80) great = '👍 很棒！';
     else great = '💪 继续加油！';

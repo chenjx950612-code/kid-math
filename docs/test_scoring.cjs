@@ -26,9 +26,10 @@ async function waitReady() {
 }
 // 内联发卡（与 tools/genkey.cjs 一致）
 function genKey(days = 365) {
-  const buf = Buffer.alloc(8);
-  buf.writeUInt32BE(Math.floor(Date.now() / 1000) + days * 86400, 0);
-  buf.writeUInt32BE(Date.now() % 0xffffffff, 4);
+  const buf = Buffer.alloc(9);
+  buf.writeUInt8(1, 0); // v1
+  buf.writeUInt32BE(days, 1);
+  buf.writeUInt32BE(Date.now() % 0xffffffff, 5);
   const b = buf.toString('hex');
   const sig = crypto.createHmac('sha256', SECRET).update(b).digest('hex').slice(0, 32);
   return ('MATH-' + (b + '.' + sig).replace(/(.{4})/g, '$1-').replace(/-$/, '')).toUpperCase();
@@ -95,16 +96,16 @@ function assert(cond, msg) {
   assert(r2.earned === 3, `计时 2对1错(2s,5s) 应得 +3，实际 ${r2.earned}`);
   assert(r2.points === 11, `孩子总分应为 11，实际 ${r2.points}`);
 
-  // 3. 闯关：100% 正确 → 每题+1 (×5) + 通关+10 + 全对+5 = 20
+  // 3. 闯关：100% 正确 → 每题+1 (×5) + 全对+5 = 10
   const r3 = await req('POST', '/api/session', {
     childId: CID, moduleId: 'add', moduleName: '加法', mode: 'challenge',
     questions: Array(5).fill(0).map((_, i) => ({ text: `${i}+1`, answer: String(i + 1), given: String(i + 1), correct: true })),
   }, H);
-  assert(r3.challengeBonus === 15, `闯关全对 通关+10+全对+5=15，实际 ${r3.challengeBonus}`);
-  assert(r3.earned === 20, `闯关全对 每题+1×5 + 15 = 20，实际 ${r3.earned}`);
-  assert(r3.points === 31, `孩子总分应为 31，实际 ${r3.points}`);
+  assert(r3.challengeBonus === 5, `闯关全对 每题+1×5 + 全对+5=10，实际 bonus ${r3.challengeBonus}`);
+  assert(r3.earned === 10, `闯关全对 每题+1×5 + 5 = 10，实际 ${r3.earned}`);
+  assert(r3.points === 21, `孩子总分应为 21，实际 ${r3.points}`);
 
-  // 4. 闯关：80% 正确（4/5）→ 每题+1×4 + 通关+10 = 14，无全对额外
+  // 4. 闯关：80% 正确（4/5）→ 通过，仅按答对题数 ×4 = 4，无额外奖励
   const r4 = await req('POST', '/api/session', {
     childId: CID, moduleId: 'add', moduleName: '加法', mode: 'challenge',
     questions: [
@@ -112,14 +113,14 @@ function assert(cond, msg) {
       { text: '9+9', answer: '18', given: '0', correct: false },
     ],
   }, H);
-  assert(r4.challengeBonus === 10, `闯关 80% 仅通关+10，实际 ${r4.challengeBonus}`);
-  assert(r4.earned === 14, `闯关 80% 每题+1×4 + 10 = 14，实际 ${r4.earned}`);
+  assert(r4.challengeBonus === 0, `闯关 80% 无额外奖励，实际 ${r4.challengeBonus}`);
+  assert(r4.earned === 4, `闯关 80% 仅每题+1×4 = 4，实际 ${r4.earned}`);
 
   // 5. 订正：不再加分
   const corr = await req('POST', '/api/correction', { childId: CID, questionText: '9+9', correct: true }, H);
   assert(corr.delta === 0, `订正正确 应得 0 分，实际 ${corr.delta}`);
 
-  // 6. 闯关未达标（<80%）：无奖励，每题+1
+  // 6. 闯关未达标（<80%）：不通过，本次积分 +0（答对也不加分）
   const r6 = await req('POST', '/api/session', {
     childId: CID, moduleId: 'add', moduleName: '加法', mode: 'challenge',
     questions: [
@@ -127,8 +128,8 @@ function assert(cond, msg) {
       ...Array(2).fill(0).map((_, i) => ({ text: `${i}+9`, answer: String(i + 9), given: '0', correct: false })),
     ],
   }, H);
-  assert(r6.challengeBonus === 0, `闯关 60% 无通关奖励，实际 ${r6.challengeBonus}`);
-  assert(r6.earned === 3, `闯关 60% 仅每题+1×3 = 3，实际 ${r6.earned}`);
+  assert(r6.challengeBonus === 0, `闯关 60% 无额外奖励，实际 ${r6.challengeBonus}`);
+  assert(r6.earned === 0, `闯关 60% 不通过，本次 0 分，实际 ${r6.earned}`);
 
   console.log('\n测试完成。');
 })().finally(() => {
