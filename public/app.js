@@ -94,7 +94,7 @@
       <div class="grid grid-3">${cards || '<div class="empty-state"><span class="big-ico">👶</span>还没有小朋友<br>点下面“添加小朋友”创建一个吧～</div>'}</div>
       <div class="spacer"></div>
       <button class="btn btn-block" onclick="openAddChild()">➕ 添加小朋友</button>
-      <button class="btn btn-ghost btn-block" onclick="switchToParent()">🔧 切换到家长</button>`;
+      <button class="btn btn-ghost btn-block" onclick="switchToParent()">👤 切换到家长</button>`;
   }
 
   // ---------- 角色选择（首次进入 / 手动切换） ----------
@@ -149,7 +149,7 @@
     $app.innerHTML = `
       <div class="child-topbar">
         <div class="child-topbar-wrap">
-          <button class="switch-btn" onclick="switchToParent()">🔧 切换家长</button>
+          <button class="switch-btn" onclick="switchToParent()">👤 切换家长</button>
           <div class="name-center">${c.avatar} ${c.name}</div>
           <div class="points-pill">⭐ ${c.points}</div>
         </div>
