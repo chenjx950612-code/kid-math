@@ -18,7 +18,7 @@ for (const g of Object.keys(SYLLABUS)) {
     for (const d of DIFFS) {
       for (let i = 0; i < 40; i++) {
         let q;
-        try { q = generateQuestion(m, { difficulty: d }); }
+        try { q = generateQuestion(m, { difficulty: d, grade: Number(g) }); }
         catch (e) { fails++; failsList.push(`[${g}/${m.id}/${d}] 抛异常: ${e.message}`); continue; }
         total++;
         check(q && typeof q.text === 'string' && q.text.length > 0, `[${g}/${m.id}/${d}] text 为空`);

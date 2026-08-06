@@ -191,21 +191,43 @@ function genPercent(m, diff) {
   return { text: `${base} 的 ${p}% 是多少？`, answer: Math.round(base * p / 100), noEq: true };
 }
 
-// 应用题：生活情境，随机选一种运算模板（数字按难度缩放），答案仍为单纯数字
-function genWord(m, diff) {
-  const big = diff === 'easy' ? 15 : diff === 'hard' ? 60 : 30;
-  const small = diff === 'easy' ? 5 : 9;
+// 应用题：生活情境，按年级与难度分级（低年级单步 → 中年级两步 → 高年级多步含小数/百分数/行程/比例），答案仍为单纯数字
+function genWord(m, diff, grade) {
+  const big = diff === 'easy' ? 20 : diff === 'hard' ? 80 : 40;
+  const mid = diff === 'easy' ? 10 : diff === 'hard' ? 50 : 25;
+  // 低年级（1-2）：单步加减乘
+  if (!grade || grade <= 2) {
+    const tpl = pick([
+      () => { const a = rnd(1, big), b = rnd(1, big); return { text: `小明有 ${a} 个苹果，妈妈又买了 ${b} 个，现在一共有几个？`, answer: a + b }; },
+      () => { let a = rnd(5, big), b = rnd(1, a); return { text: `书架上有 ${a} 本书，借走了 ${b} 本，还剩几本？`, answer: a - b }; },
+      () => { const a = rnd(2, 9), b = rnd(2, 9); return { text: `一盒有 ${a} 个鸡蛋，${b} 盒一共有几个？`, answer: a * b }; },
+      () => { const b = rnd(2, 9), q = rnd(2, 9), a = b * q; return { text: `把 ${a} 块饼干平均分给 ${b} 个小朋友，每人分几块？`, answer: q }; },
+    ]);
+    const q = tpl(); q.hint = '读题，写出数字答案'; q.noEq = true; return q;
+  }
+  // 中年级（3-4）：两步运算，含乘除、总价找零、余数、平均数逆向
+  if (grade <= 4) {
+    const tpl = pick([
+      () => { const a = rnd(2, 9), b = rnd(2, 6), c = rnd(1, mid); return { text: `一箱有 ${a} 瓶水，买了 ${b} 箱，又单独买了 ${c} 瓶，一共有多少瓶？`, answer: a * b + c }; },
+      () => { const p = rnd(3, 12), n = rnd(2, 6), pay = p * n, give = pay + rnd(5, 30); return { text: `每支笔 ${p} 元，买 ${n} 支，付了 ${give} 元，应找回多少元？`, answer: give - pay }; },
+      () => { const a = rnd(10, big), b = rnd(2, 9); const q = Math.floor(a / b); return { text: `把 ${a} 颗糖平均分给 ${b} 个小朋友，每人分 ${q} 颗，还剩几颗？`, answer: a - q * b }; },
+      () => { let a = rnd(10, big), b = rnd(2, 9), c = rnd(2, 9); const t = a - b * c; return { text: `停车场原来有 ${a} 辆车，开走了 ${b} 次、每次 ${c} 辆，还剩多少辆？`, answer: Math.max(0, t) }; },
+      () => { const avg = rnd(85, 95), x = rnd(80, 95), y = rnd(80, 95), total = avg * 3; return { text: `小红三次数学测验平均分 ${avg} 分，前两次分别 ${x} 分和 ${y} 分，第三次应得多少分？`, answer: total - x - y }; },
+    ]);
+    const q = tpl(); q.hint = '先分步算，再写答案'; q.noEq = true; return q;
+  }
+  // 高年级（5-6）：多步，含小数购物、行程、折扣、分数、混合计价、比例
   const tpl = pick([
-    () => { const a = rnd(1, big), b = rnd(1, big); return { text: `小明有 ${a} 个苹果，妈妈又买了 ${b} 个，现在一共有几个？`, answer: a + b }; },
-    () => { const a = rnd(1, big), b = rnd(1, big); return { text: `停车场原来有 ${a} 辆车，又开来 ${b} 辆，现在一共有几辆？`, answer: a + b }; },
-    () => { let a = rnd(5, big), b = rnd(1, a); return { text: `书架上有 ${a} 本书，借走了 ${b} 本，还剩几本？`, answer: a - b }; },
-    () => { let a = rnd(5, big), b = rnd(1, a); return { text: `小红有 ${a} 颗糖，吃掉 ${b} 颗，还剩几颗？`, answer: a - b }; },
-    () => { const a = rnd(2, small), b = rnd(2, small); return { text: `一盒有 ${a} 个鸡蛋，${b} 盒一共有几个？`, answer: a * b }; },
-    () => { const b = rnd(2, small), q = rnd(2, small), a = b * q; return { text: `把 ${a} 块饼干平均分给 ${b} 个小朋友，每人分几块？`, answer: q }; },
-    () => { let a = rnd(5, big), b = rnd(1, a), c = rnd(1, a + b); return { text: `小明原来有 ${a} 元，妈妈给了 ${b} 元，买笔花了 ${c} 元，现在还剩几元？`, answer: a + b - c }; },
+    () => { const p = rnd(2, 9) + (Math.random() < 0.5 ? 0.5 : 0); const n = rnd(2, 5); const cost = roundTo(p * n, 2); const give = Math.ceil(cost) + rnd(1, 10); return { text: `每千克苹果 ${fmt(p)} 元，买了 ${n} 千克，付了 ${give} 元，应找回多少元？`, answer: roundTo(give - cost, 2) }; },
+    () => { const s = rnd(40, 90), t = rnd(2, 5); const d = s * t; const extra = rnd(10, 50); return { text: `一辆汽车每小时行驶 ${s} 千米，行了 ${t} 小时，实际比计划多走 ${extra} 千米，计划行驶多少千米？`, answer: d - extra }; },
+    () => { const base = rnd(40, 200), p = pick([10, 20, 25, 50]); return { text: `一件衣服原价 ${base} 元，打 ${p} 折，现价多少元？`, answer: Math.round(base * p / 100) }; },
+    () => { const total = rnd(30, 80), frac = pick([2, 3, 4]); return { text: `全班有 ${total} 人，其中男生占 ${1}/${frac}，男生大约有多少人？（取整数）`, answer: Math.floor(total / frac) }; },
+    () => { const a = rnd(6, 12), b = rnd(3, 8); return { text: `铅笔每支 ${a} 元，橡皮每块 ${b} 元，买 3 支铅笔和 2 块橡皮，一共多少元？`, answer: a * 3 + b * 2 }; },
+    () => { const k = rnd(2, 5), a = rnd(4, 12) * 10; const b = a * k; return { text: `甲车间生产 ${a} 个零件，乙车间产量是甲车间的 ${k} 倍，两个车间一共生产多少个零件？`, answer: a + b }; },
   ]);
   const q = tpl();
-  q.hint = '读题，写出数字答案'; q.noEq = true;
+  if (typeof q.answer === 'number' && !Number.isInteger(q.answer)) q.decimal = true;
+  q.hint = '分步列式，写出数字答案'; q.noEq = true;
   return q;
 }
 
@@ -347,17 +369,37 @@ function genPattern(m, diff) {
   return { text: `${t.join(', ')}, ?`, answer: s * f * f * f * f, hint: '找规律，填下一个数', noEq: true };
 }
 
-// 统计图表：用文字描述两组数量关系
-function genStats(m, diff) {
-  const names = [['苹果', '橘子'], ['男生', '女生'], ['红球', '蓝球'], ['铅笔', '橡皮']];
-  const [n1, n2] = pick(names);
-  const hi = diff === 'easy' ? 4 : 7;
-  const a = rnd(2, hi), b = rnd(2, hi);
-  let text, answer;
-  if (Math.random() < 0.4) { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，一共有几个？`; answer = a + b; }
-  else if (a >= b) { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，${n1}比${n2}多几个？`; answer = a - b; }
-  else { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，${n2}比${n1}多几个？`; answer = b - a; }
-  return { text, answer, hint: '想一想，写出答案', noEq: true };
+// 统计图表：按年级与难度分级，从条形/表格数据中多步提取并计算
+function genStats(m, diff, grade) {
+  const hi = diff === 'easy' ? 8 : diff === 'hard' ? 25 : 15;
+  // 低年级（1-2）：两组比多少 / 求和（数字范围更大）
+  if (!grade || grade <= 2) {
+    const names = [['苹果', '橘子'], ['男生', '女生'], ['红球', '蓝球'], ['铅笔', '橡皮']];
+    const [n1, n2] = pick(names);
+    const a = rnd(3, hi), b = rnd(3, hi);
+    let text, answer;
+    if (Math.random() < 0.4) { text = `统计发现：${n1}有 ${a} 个，${n2}有 ${b} 个，一共有几个？`; answer = a + b; }
+    else if (a >= b) { text = `统计发现：${n1}有 ${a} 个，${n2}有 ${b} 个，${n1}比${n2}多几个？`; answer = a - b; }
+    else { text = `统计发现：${n1}有 ${a} 个，${n2}有 ${b} 个，${n2}比${n1}多几个？`; answer = b - a; }
+    return { text, answer, hint: '看图（数据），算一算', noEq: true };
+  }
+  // 中年级（3-4）：三类数据，求总数 / 最大最小差 / 平均
+  if (grade <= 4) {
+    const a = rnd(5, hi), b = rnd(5, hi); let c = rnd(5, hi);
+    const kind = pick(['sum', 'diff', 'avg']);
+    if (kind === 'sum') return { text: `三个小组收集废纸：一组 ${a} 千克，二组 ${b} 千克，三组 ${c} 千克，一共多少千克？`, answer: a + b + c, hint: '把三组加起来', noEq: true };
+    if (kind === 'diff') { const mx = Math.max(a, b, c), mn = Math.min(a, b, c); return { text: `三个小组收集废品：一组 ${a} 个，二组 ${b} 个，三组 ${c} 个，最多的比最少的多几个？`, answer: mx - mn, hint: '先找最多和最少', noEq: true }; }
+    let s = a + b + c; if (s % 3 !== 0) { c = c + (3 - (s % 3)); s = a + b + c; }
+    return { text: `小明三次跳绳成绩：第1次 ${a} 下，第2次 ${b} 下，第3次 ${c} 下，平均每次跳多少下？`, answer: s / 3, hint: '总数 ÷ 3', noEq: true };
+  }
+  // 高年级（5-6）：读表多步，平均数（整除）、倍数、已知平均反推、极差
+  const a = rnd(10, hi * 2), b = rnd(10, hi * 2); let c = rnd(10, hi * 2);
+  const kind = pick(['avg', 'mult', 'back', 'range']);
+  if (kind === 'avg') { let s = a + b + c; if (s % 3 !== 0) { c = c + (3 - (s % 3)); s = a + b + c; } return { text: `某小队三天植树：第一天 ${a} 棵，第二天 ${b} 棵，第三天 ${c} 棵，平均每天植树多少棵？`, answer: s / 3, hint: '总数 ÷ 3', noEq: true }; }
+  if (kind === 'mult') { const k = rnd(2, 4); const bigger = b * k; return { text: `甲班有 ${b} 人，乙班人数是甲班的 ${k} 倍，甲乙两班一共多少人？`, answer: b + bigger, hint: '先算乙班，再加', noEq: true }; }
+  if (kind === 'back') { const avg = rnd(20, 60), x = rnd(15, avg - 1), y = rnd(15, avg - 1), z = rnd(15, avg - 1), total = avg * 4; return { text: `四次数学测验平均分 ${avg} 分，前三次分别是 ${x} 分、${y} 分、${z} 分，第四次至少得多少分才能使平均分达到 ${avg} 分？`, answer: total - x - y - z, hint: '总数 = 平均×4，再减前三次', noEq: true }; }
+  const mx = Math.max(a, b, c), mn = Math.min(a, b, c);
+  return { text: `三个商场上月销售额（万元）：甲 ${a}，乙 ${b}，丙 ${c}。销售额最高的比最低的多多少万元？`, answer: mx - mn, hint: '找最大最小再相减', noEq: true };
 }
 
 // 判断题：低年级以简单算式/换算为主；高年级按课标加入概念、运算律、几何等
@@ -507,13 +549,13 @@ function generateQuestion(module, opts) {
     case 'fracadd': q = genFracAdd(module, diff); break;
     case 'fracmul': q = genFracMul(module, diff); break;
     case 'fracMix': q = genFracMix(module, diff); break;
-    case 'word': q = genWord(module, diff); break;
+    case 'word': q = genWord(module, diff, opts.grade); break;
     case 'compare': q = genCompare(module, diff, opts.grade); break;
     case 'fill': q = genFill(module, diff); break;
     case 'measure': q = genMeasure(module, diff); break;
     case 'shape': q = genShape(module, diff); break;
     case 'pattern': q = genPattern(module, diff); break;
-    case 'stats': q = genStats(module, diff); break;
+    case 'stats': q = genStats(module, diff, opts.grade); break;
     case 'judge': q = genJudge(module, diff, opts.grade); break;
     default: q = genAdd({ max: 20 }, diff);
   }
