@@ -142,8 +142,13 @@ h1.title { text-align: center; font-size: 34px; margin: 10px 0 4px; color: var(-
 .timerbar { height: 14px; background: #ffe2e2; border-radius: 999px; overflow: hidden; margin: 8px 0 18px; }
 .timerbar > i { display: block; height: 100%; background: linear-gradient(90deg,#ff9aa2,#ff6b6b); width: 100%; transition: width 1s linear; }
 
-.qtext { font-size: 58px; font-weight: 800; margin: 14px 0 6px; color: var(--ink); letter-spacing: 2px; }
+.qtext { font-size: 58px; font-weight: 800; margin: 14px 0 6px; color: var(--ink); letter-spacing: 2px; line-height: 1.25; overflow-wrap: anywhere; }
+.qtext.long { font-size: 26px; font-weight: 700; letter-spacing: 0.5px; }
 .qhint { color: var(--muted); margin-bottom: 14px; font-size: 15px; }
+.diff-pills { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 16px; }
+.diff-label { color: var(--muted); font-size: 15px; }
+.pill { font-size: 16px; font-weight: 700; padding: 8px 18px; border-radius: 999px; background: #fff; box-shadow: var(--shadow); cursor: pointer; border: 3px solid #fff; color: var(--muted); }
+.pill.on { background: var(--purple); color: #fff; border-color: var(--purple); }
 
 .dots { display: grid; gap: 8px; justify-content: center; margin: 6px auto 16px; max-width: 320px; }
 .dots .row { display: flex; gap: 8px; justify-content: center; }

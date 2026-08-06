@@ -4,7 +4,7 @@
   const $overlay = document.getElementById('overlay');
 
   const S = {
-    screen: 'home', child: null, grade: null, module: null, mode: null,
+    screen: 'home', child: null, grade: null, module: null, mode: null, difficulty: 'medium',
     questions: [], idx: 0, results: [], cur: null, startTime: 0, timer: null, timedLeft: 0,
     locked: false, input: '', inCorrection: false, correctionEntry: null, correctionGiven: '',
     parentTab: 'children', pinOk: false, _children: [], _rewards: [], _wrongBook: [], _newAvatar: '🐱', _editReward: null,
@@ -62,7 +62,7 @@
   }
 
   function moduleEmoji(t) {
-    return ({ add: '➕', sub: '➖', addsub: '🔁', mul: '✖️', div: '➗', mixed: '🧮', decadd: '💧', decmul: '💧', decdiv: '💧', fracadd: '🍕', fracmul: '🍕', percent: '％' })[t] || '📘';
+    return ({ add: '➕', sub: '➖', addsub: '🔁', mul: '✖️', div: '➗', mixed: '🧮', decadd: '💧', decmul: '💧', decdiv: '💧', decMix: '💧', fracadd: '🍕', fracmul: '🍕', fracMix: '🍕', percent: '％', word: '📖', compare: '⚖️', fill: '✍️', measure: '📏', shape: '🔷', pattern: '🔢', stats: '📊', judge: '❓' })[t] || '📘';
   }
   function moduleSub(m) {
     if (m.type === 'add' || m.type === 'sub') return `1~${m.max} 以内`;
@@ -73,6 +73,14 @@
     if (m.type.startsWith('dec')) return `小数运算`;
     if (m.type.startsWith('frac')) return `分数`;
     if (m.type === 'percent') return `百分数`;
+    if (m.type === 'word') return `生活情境题`;
+    if (m.type === 'compare') return `比大小`;
+    if (m.type === 'fill') return `求未知数`;
+    if (m.type === 'measure') return `单位换算`;
+    if (m.type === 'shape') return `图形周长`;
+    if (m.type === 'pattern') return `找规律`;
+    if (m.type === 'stats') return `统计图表`;
+    if (m.type === 'judge') return `判断对错`;
     return '';
   }
   function badgeFor(mode) {
@@ -180,10 +188,20 @@
 
   function selectGrade(g) {
     S.grade = g; S.screen = 'module';
+    renderModules(g);
+  }
+  function renderModules(g) {
     const mods = SYLLABUS[g];
+    const diff = (d, label) => `<button class="pill ${S.difficulty === d ? 'on' : ''}" onclick="setDifficulty('${d}')">${label}</button>`;
     $app.innerHTML = `
       <div class="topbar"><button class="btn btn-ghost" onclick="gotoGrade()">←</button><div class="who">${GRADE_LABELS[g]}</div><div></div></div>
-      <h1 class="title">选一关</h1>
+      <h1 class="title">选题型</h1>
+      <div class="diff-pills">
+        <span class="diff-label">难度</span>
+        ${diff('easy', '🌱 易')}
+        ${diff('medium', '🌿 中')}
+        ${diff('hard', '🔥 难')}
+      </div>
       <div class="list">
         ${mods.map(m => `
           <div class="card module-card" onclick="selectModule('${m.id}')">
@@ -192,7 +210,7 @@
           </div>`).join('')}
       </div>`;
   }
-
+  function setDifficulty(d) { S.difficulty = d; renderModules(S.grade); }
   function selectModule(id) {
     S.module = SYLLABUS[S.grade].find(m => m.id === id); S.screen = 'mode';
     $app.innerHTML = `
@@ -214,7 +232,7 @@
   function startPractice() {
     const n = 10;
     S.questions = []; S.idx = 0; S.results = [];
-    for (let i = 0; i < n; i++) S.questions.push(generateQuestion(S.module));
+    for (let i = 0; i < n; i++) S.questions.push(generateQuestion(S.module, { difficulty: S.difficulty }));
     renderQuestion();
   }
 
@@ -254,8 +272,8 @@
           <span class="badge" style="background:var(--yellow);color:#7a5b00">⭐ ${S.child.points}</span>
         </div>
         ${timed ? `<div class="timerbar"><i id="timerbar"></i></div>` : ''}
-        <div class="qtext">${q.text}${q.choices ? '' : ' = ?'}</div>
-        <div class="qhint">${q.choices ? '点一个答案' : '用小键盘写出答案'}</div>
+        <div class="qtext ${q.text.length > 16 ? 'long' : ''}">${q.text}${q.choices || q.noEq ? '' : ' = ?'}</div>
+        <div class="qhint">${q.hint || (q.choices ? '点一个答案' : '用小键盘写出答案')}</div>
         ${q.dots ? renderDots(q.dots) : ''}
         ${q.choices ? '' : `<div class="answer-box" id="ansbox"></div>`}
         ${inputArea}
