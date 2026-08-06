@@ -94,6 +94,25 @@ h1.title { text-align: center; font-size: 34px; margin: 10px 0 4px; color: var(-
 .child-card .name { font-size: 22px; margin-top: 6px; font-weight: 700; }
 .child-card .meta { font-size: 14px; color: var(--muted); margin-top: 2px; }
 
+.empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 42px 22px;
+  color: var(--muted);
+  background: rgba(255,255,255,0.72);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 0 rgba(0,0,0,0.04);
+  font-size: 16px;
+  line-height: 1.6;
+}
+.empty-state .big-ico {
+  display: block;
+  font-size: 56px;
+  line-height: 1;
+  margin-bottom: 12px;
+  opacity: 0.85;
+}
+
 .module-card { cursor: pointer; text-align: left; display: flex; align-items: center; gap: 14px; }
 .module-card .emoji { font-size: 40px; }
 .module-card .m-name { font-size: 20px; font-weight: 700; }

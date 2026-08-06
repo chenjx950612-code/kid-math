@@ -91,7 +91,7 @@
     $app.innerHTML = `
       <h1 class="title">算术小乐园</h1>
       <p class="subtitle">选一个小朋友开始吧！</p>
-      <div class="grid grid-3">${cards || '<p class="center muted">还没有小朋友，点下面添加～</p>'}</div>
+      <div class="grid grid-3">${cards || '<div class="empty-state"><span class="big-ico">👶</span>还没有小朋友<br>点下面“添加小朋友”创建一个吧～</div>'}</div>
       <div class="spacer"></div>
       <button class="btn btn-block" onclick="openAddChild()">➕ 添加小朋友</button>
       <button class="btn btn-ghost btn-block" onclick="switchToParent()">🔧 切换到家长</button>`;
@@ -437,7 +437,7 @@
             <div class="rn">${r.name}</div>
             <div class="cost">⭐ ${r.cost}</div>
             <button class="btn ${c.points >= r.cost ? 'btn-primary' : 'btn-ghost'}" ${c.points >= r.cost ? '' : 'disabled'} onclick="redeem('${r.id}')">${c.points >= r.cost ? '兑换' : '积分不够'}</button>
-          </div>`).join('') : '<p class="center muted">还没有礼品，让家长去添加～</p>'}
+          </div>`).join('') : '<div class="empty-state"><span class="big-ico">🎁</span>还没有礼品<br>让家长去“家长面板”里添加吧～</div>'}
       </div>`;
   }
   async function redeem(id) {
