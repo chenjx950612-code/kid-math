@@ -150,19 +150,25 @@ function licenseDaysLeft(f) {
   return f.license ? Math.max(0, Math.ceil((f.license.exp - Date.now()) / 86400000)) : 0;
 }
 
-// 本地验签离线卡密：MATH-XXXX-XXXX-XXXX；payload 为 8 字节 hex（exp 秒 + seq），返回 {exp(ms), seq}
+// 本地验签离线卡密：MATH-XXXX-XXXX-XXXX
+// payload 为 9 字节 hex：[版本=1(1字节)][有效天数 days(4字节)][序号 seq(4字节)]
+// 卡密只含“天数”，不含绝对到期时间；有效期从“激活（创建家庭）那一刻”起算
 function verifyKey(rawKey) {
   if (!rawKey) return null;
-  const s = String(rawKey).trim().replace(/^MATH-?/i, '').replace(/-/g, '');
+  const s = String(rawKey).trim().replace(/^MATH-?/i, '').replace(/-/g, '').toLowerCase();
   const i = s.lastIndexOf('.');
   if (i < 0) return null;
-  const b = s.slice(0, i).toLowerCase(), sig = s.slice(i + 1).toLowerCase();
+  const b = s.slice(0, i), sig = s.slice(i + 1);
   const expect = crypto.createHmac('sha256', LICENSE_SECRET).update(b).digest('hex').slice(0, 32);
   if (expect !== sig) return null;
   try {
     const buf = Buffer.from(b, 'hex');
-    if (buf.length !== 8) return null;
-    return { exp: buf.readUInt32BE(0) * 1000, seq: buf.readUInt32BE(4) };
+    if (buf.length !== 9) return null;
+    if (buf.readUInt8(0) !== 1) return null; // 仅支持 v1 格式
+    const days = buf.readUInt32BE(1);
+    const seq = buf.readUInt32BE(5);
+    if (days < 1 || days > 3650) return null; // 合理范围：1 天 ~ 10 年
+    return { days, seq };
   } catch (e) { /* 解析失败视为无效 */ }
   return null;
 }
@@ -352,17 +358,17 @@ async function handleApi(req, res, pathname, segs) {
     let isNew = false;
     if (!f) {
       if (b.create === false) return send(res, 200, { ok: false, error: 'PIN 不存在' });
-      // 创建家庭：一卡密一家庭，本地离线验签激活（卡密含有效期）
+      // 创建家庭：一卡密一家庭，本地离线验签激活（卡密含有效天数）
       const key = String(b.key || '').trim().toUpperCase();
       if (!key) return send(res, 200, { ok: false, error: '创建家庭需要激活卡密', licenseRequired: true });
       const payload = verifyKey(key);
       if (!payload) return send(res, 200, { ok: false, error: '卡密无效，请核对后重试' });
-      if (payload.exp <= Date.now()) return send(res, 200, { ok: false, error: '该卡密已过期，请联系卖家' });
       // 同一卡密在本机只能绑定一个家庭（防止输不同 PIN 重复创建）
       const dup = DB.families.find((x) => x.license && x.license.key === key);
       if (dup) return send(res, 200, { ok: false, error: '此卡密已绑定家庭，请输入该家庭 PIN 加入' });
+      // 激活计时：有效期从“激活（创建家庭）这一刻”起算
       f = newFamily(pin);
-      f.license = { key, exp: payload.exp, valid: true, lastCheckedAt: new Date().toISOString() };
+      f.license = { key, exp: Date.now() + payload.days * 86400000, valid: true, lastCheckedAt: new Date().toISOString() };
       DB.families.push(f);
       save();
       isNew = true;
@@ -394,10 +400,11 @@ async function handleApi(req, res, pathname, segs) {
     if (!key) return send(res, 200, { ok: false, error: '请输入新卡密' });
     const payload = verifyKey(key);
     if (!payload) return send(res, 200, { ok: false, error: '卡密无效，请核对后重试' });
-    if (payload.exp <= Date.now()) return send(res, 200, { ok: false, error: '该卡密已过期，无法续费' });
-    family.license = { key, exp: payload.exp, valid: true, lastCheckedAt: new Date().toISOString() };
+    // 续费计时：从“续费这一刻”起算新的一年期
+    const newExp = Date.now() + payload.days * 86400000;
+    family.license = { key, exp: newExp, valid: true, lastCheckedAt: new Date().toISOString() };
     save();
-    return send(res, 200, { ok: true, exp: payload.exp, daysLeft: Math.max(0, Math.ceil((payload.exp - Date.now()) / 86400000)) });
+    return send(res, 200, { ok: true, exp: newExp, daysLeft: payload.days });
   }
 
   // 版本号（前端轮询用，不受 license 拦截）

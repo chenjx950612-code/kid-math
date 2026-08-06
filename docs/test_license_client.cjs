@@ -19,11 +19,12 @@ const SECRET = 'kid-math-license-v1-2026'; // 与 server.js 默认 LICENSE_SECRE
 
 let appProc;
 
-// 内联发卡逻辑（与 tools/genkey.cjs 一致）
+// 内联发卡逻辑（与 tools/genkey.cjs 一致：9 字节 [v1][days][seq]）
 function genKey(days = 365) {
-  const buf = Buffer.alloc(8);
-  buf.writeUInt32BE(Math.floor(Date.now() / 1000) + days * 86400, 0);
-  buf.writeUInt32BE(Date.now() % 0xffffffff, 4);
+  const buf = Buffer.alloc(9);
+  buf.writeUInt8(1, 0);
+  buf.writeUInt32BE(days, 1);
+  buf.writeUInt32BE(Date.now() % 0xffffffff, 5);
   const b = buf.toString('hex');
   const sig = crypto.createHmac('sha256', SECRET).update(b).digest('hex').slice(0, 32);
   return ('MATH-' + (b + '.' + sig).replace(/(.{4})/g, '$1-').replace(/-$/, '')).toUpperCase();
