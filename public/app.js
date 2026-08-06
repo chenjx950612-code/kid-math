@@ -201,7 +201,7 @@
       <div class="grid">
         <div class="card module-card" onclick="selectMode('practice')"><div class="emoji">😊</div><div><div class="m-name">练习模式</div><div class="m-sub">对+1 错不扣</div></div></div>
         <div class="card module-card" onclick="selectMode('timed')"><div class="emoji">⏱️</div><div><div class="m-name">计时模式</div><div class="m-sub">对+1~2 越快越多</div></div></div>
-        <div class="card module-card" onclick="selectMode('challenge')"><div class="emoji">🏆</div><div><div class="m-name">闯关模式</div><div class="m-sub">达标通关 +10，全对 +15</div></div></div>
+        <div class="card module-card" onclick="selectMode('challenge')"><div class="emoji">🏆</div><div><div class="m-name">闯关模式</div><div class="m-sub">达标按答对给分，全对 +5</div></div></div>
       </div>`;
   }
 
