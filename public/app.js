@@ -4,7 +4,7 @@
   const $overlay = document.getElementById('overlay');
 
   const S = {
-    screen: 'home', child: null, grade: null, module: null, mode: null, difficulty: 'medium',
+    screen: 'home', child: null, grade: null, module: null, mode: null, difficulty: 'hard',
     questions: [], idx: 0, results: [], cur: null, startTime: 0, timer: null, timedLeft: 0,
     locked: false, input: '', inCorrection: false, correctionEntry: null, correctionGiven: '',
     parentTab: 'children', pinOk: false, _children: [], _rewards: [], _wrongBook: [], _newAvatar: '🐱', _editReward: null,
@@ -192,16 +192,9 @@
   }
   function renderModules(g) {
     const mods = SYLLABUS[g];
-    const diff = (d, label) => `<button class="pill ${S.difficulty === d ? 'on' : ''}" onclick="setDifficulty('${d}')">${label}</button>`;
     $app.innerHTML = `
       <div class="topbar"><button class="btn btn-ghost" onclick="gotoGrade()">←</button><div class="who">${GRADE_LABELS[g]}</div><div></div></div>
       <h1 class="title">选题型</h1>
-      <div class="diff-pills">
-        <span class="diff-label">难度</span>
-        ${diff('easy', '🌱 易')}
-        ${diff('medium', '🌿 中')}
-        ${diff('hard', '🔥 难')}
-      </div>
       <div class="list">
         ${mods.map(m => `
           <div class="card module-card" onclick="selectModule('${m.id}')">
@@ -210,7 +203,6 @@
           </div>`).join('')}
       </div>`;
   }
-  function setDifficulty(d) { S.difficulty = d; renderModules(S.grade); }
   function selectModule(id) {
     S.module = SYLLABUS[S.grade].find(m => m.id === id); S.screen = 'mode';
     $app.innerHTML = `
@@ -894,7 +886,7 @@
 
   Object.assign(window, {
     selectChild, openAddChild, pickAvatar, saveChild, closeAdd, backHome,
-    renderChildMenu, gotoGrade, selectGrade, setDifficulty, selectModule, selectMode,
+    renderChildMenu, gotoGrade, selectGrade, selectModule, selectMode,
     keyTap, choiceTap, gotoWrong, startCorrection, gotoStore, redeem,
     openParent, submitPin, closeModal, parentTab, renderParent,
     openRewardModal, pickIcon, saveReward, deleteReward, closeReward,
