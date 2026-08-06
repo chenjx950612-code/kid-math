@@ -232,7 +232,7 @@
   function startPractice() {
     const n = 10;
     S.questions = []; S.idx = 0; S.results = [];
-    for (let i = 0; i < n; i++) S.questions.push(generateQuestion(S.module, { difficulty: S.difficulty }));
+    for (let i = 0; i < n; i++) S.questions.push(generateQuestion(S.module, { difficulty: S.difficulty, grade: S.grade }));
     renderQuestion();
   }
 

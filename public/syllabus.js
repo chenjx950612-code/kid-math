@@ -188,7 +188,7 @@ function genFracMul(m, diff) {
 function genFracMix(m, diff) { return pick([genFracAdd, genFracMul])(m, diff); }
 function genPercent(m, diff) {
   const p = pick([10, 20, 25, 50, 75]), base = pick([20, 40, 60, 80, 100]);
-  return { text: `${p}% of ${base} = ?`, answer: Math.round(base * p / 100) };
+  return { text: `${base} 的 ${p}% 是多少？`, answer: Math.round(base * p / 100), noEq: true };
 }
 
 // 应用题：生活情境，随机选一种运算模板（数字按难度缩放），答案仍为单纯数字
@@ -196,29 +196,99 @@ function genWord(m, diff) {
   const big = diff === 'easy' ? 15 : diff === 'hard' ? 60 : 30;
   const small = diff === 'easy' ? 5 : 9;
   const tpl = pick([
-    () => { const a = rnd(1, big), b = rnd(1, big); return { text: `🍎 小明有 ${a} 个苹果，妈妈又买了 ${b} 个，现在一共有几个？`, answer: a + b }; },
-    () => { const a = rnd(1, big), b = rnd(1, big); return { text: `🚌 停车场原来有 ${a} 辆车，又开来 ${b} 辆，现在一共有几辆？`, answer: a + b }; },
-    () => { let a = rnd(5, big), b = rnd(1, a); return { text: `📚 书架上有 ${a} 本书，借走了 ${b} 本，还剩几本？`, answer: a - b }; },
-    () => { let a = rnd(5, big), b = rnd(1, a); return { text: `🍬 小红有 ${a} 颗糖，吃掉 ${b} 颗，还剩几颗？`, answer: a - b }; },
-    () => { const a = rnd(2, small), b = rnd(2, small); return { text: `🥚 一盒有 ${a} 个鸡蛋，${b} 盒一共有几个？`, answer: a * b }; },
-    () => { const b = rnd(2, small), q = rnd(2, small), a = b * q; return { text: `🍪 把 ${a} 块饼干平均分给 ${b} 个小朋友，每人分几块？`, answer: q }; },
-    () => { let a = rnd(5, big), b = rnd(1, a), c = rnd(1, a + b); return { text: `🏃 小明原来有 ${a} 元，妈妈给了 ${b} 元，买笔花了 ${c} 元，现在还剩几元？`, answer: a + b - c }; },
+    () => { const a = rnd(1, big), b = rnd(1, big); return { text: `小明有 ${a} 个苹果，妈妈又买了 ${b} 个，现在一共有几个？`, answer: a + b }; },
+    () => { const a = rnd(1, big), b = rnd(1, big); return { text: `停车场原来有 ${a} 辆车，又开来 ${b} 辆，现在一共有几辆？`, answer: a + b }; },
+    () => { let a = rnd(5, big), b = rnd(1, a); return { text: `书架上有 ${a} 本书，借走了 ${b} 本，还剩几本？`, answer: a - b }; },
+    () => { let a = rnd(5, big), b = rnd(1, a); return { text: `小红有 ${a} 颗糖，吃掉 ${b} 颗，还剩几颗？`, answer: a - b }; },
+    () => { const a = rnd(2, small), b = rnd(2, small); return { text: `一盒有 ${a} 个鸡蛋，${b} 盒一共有几个？`, answer: a * b }; },
+    () => { const b = rnd(2, small), q = rnd(2, small), a = b * q; return { text: `把 ${a} 块饼干平均分给 ${b} 个小朋友，每人分几块？`, answer: q }; },
+    () => { let a = rnd(5, big), b = rnd(1, a), c = rnd(1, a + b); return { text: `小明原来有 ${a} 元，妈妈给了 ${b} 元，买笔花了 ${c} 元，现在还剩几元？`, answer: a + b - c }; },
   ]);
   const q = tpl();
   q.hint = '读题，写出数字答案'; q.noEq = true;
   return q;
 }
 
-// 比大小：算出左右两边，选出 > < =
-function genCompare(m, diff) {
+// 比大小：低年级直接比两个结果，高年级按课标升级（小数/分数/百分数/负数/比）
+function genCompare(m, diff, grade) {
   const hi = hiBound(m.max || 50, diff);
-  const op = pick(['+', '-']);
-  let a = rnd(1, hi), b = rnd(1, hi);
-  const L = op === '+' ? a + b : (a >= b ? a - b : b - a);
-  let R = L + pick([-3, -2, -1, 1, 2, 3]);
-  if (R < 0) R = L + 3;
-  const ans = L > R ? '>' : L < R ? '<' : '=';
-  return { text: `${L} ○ ${R}`, choices: ['>', '<', '='], answer: ans, hint: '比一比，选一个符号', noEq: true };
+  const cmpAns = (L, R) => L > R ? '>' : L < R ? '<' : '=';
+  // 低年级：两个整数结果比大小
+  if (!grade || grade <= 3) {
+    const op = pick(['+', '-']);
+    let a = rnd(1, hi), b = rnd(1, hi);
+    const L = op === '+' ? a + b : (a >= b ? a - b : b - a);
+    let R = L + pick([-3, -2, -1, 1, 2, 3]);
+    if (R < 0) R = L + 3;
+    return { text: `${L} ○ ${R}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '比一比，选一个符号', noEq: true };
+  }
+  // 四年级：一位小数、同分母分数、整数运算结果
+  if (grade === 4) {
+    const kind = pick(['dec', 'fracSame', 'expr']);
+    if (kind === 'dec') {
+      const L = roundTo(rnd(1, 9) + rnd(0, 9) / 10, 1);
+      const R = Math.random() < 0.2 ? L : roundTo(L + pick([-0.5, -0.3, -0.2, -0.1, 0.1, 0.2, 0.3, 0.5]), 1);
+      return { text: `${fmt(L)} ○ ${fmt(R)}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '比一比', noEq: true };
+    }
+    if (kind === 'fracSame') {
+      const d = rnd(2, 6), a = rnd(1, d - 1), b = rnd(1, d - 1);
+      return { text: `${a}/${d} ○ ${b}/${d}`, choices: ['>', '<', '='], answer: cmpAns(a, b), hint: '分母相同，比分子', noEq: true };
+    }
+    const a = rnd(1, hi), b = rnd(1, hi), c = rnd(1, hi), d = rnd(1, hi);
+    const L = Math.random() < 0.5 ? a + b : Math.abs(a - b);
+    const R = Math.random() < 0.5 ? c + d : Math.abs(c - d);
+    return { text: `${L} ○ ${R}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '先算再比', noEq: true };
+  }
+  // 五年级：两位小数、异分母分数、小数乘除、带括号运算
+  if (grade === 5) {
+    const kind = pick(['dec', 'fracDiff', 'decmul', 'paren']);
+    if (kind === 'dec') {
+      const L = roundTo(rnd(1, 9) + rnd(0, 99) / 100, 2);
+      const R = Math.random() < 0.2 ? L : roundTo(L + pick([-0.5, -0.3, -0.22, -0.05, 0.05, 0.22, 0.3, 0.5]), 2);
+      return { text: `${fmt(L)} ○ ${fmt(R)}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '比一比', noEq: true };
+    }
+    if (kind === 'fracDiff') {
+      const b = rnd(2, 6), d = rnd(2, 6), a = rnd(1, b - 1 || 1), c = rnd(1, d - 1 || 1);
+      const L = a / b, R = c / d;
+      return { text: `${a}/${b} ○ ${c}/${d}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '先通分，再比较', noEq: true };
+    }
+    if (kind === 'decmul') {
+      const a = roundTo(rnd(1, 9) + rnd(0, 9) / 10, 1), b = rnd(2, 9), c = roundTo(rnd(1, 9) + rnd(0, 9) / 10, 1);
+      const L = a * b, R = c;
+      return { text: `${fmt(a)} × ${b} ○ ${fmt(c)}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '先算左边', noEq: true };
+    }
+    const a = rnd(2, 9), b = rnd(2, 9), c = rnd(2, 5);
+    const L = a + b * c, R = (a + b) * c;
+    return { text: `${a} + ${b} × ${c} ○ (${a} + ${b}) × ${c}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '注意括号', noEq: true };
+  }
+  // 六年级：分数/小数/百分数混合、负数、比、复杂运算
+  const kind = pick(['mixNum', 'neg', 'ratio', 'fracExpr']);
+  if (kind === 'mixNum') {
+    const items = pick([
+      { L: '1/2', vL: 0.5, R: '0.55', vR: 0.55 },
+      { L: '0.75', vL: 0.75, R: '3/4', vR: 0.75 },
+      { L: '50%', vL: 0.5, R: '0.4', vR: 0.4 },
+      { L: '25%', vL: 0.25, R: '1/4', vR: 0.25 },
+      { L: '0.6', vL: 0.6, R: '3/5', vR: 0.6 },
+      { L: '125%', vL: 1.25, R: '1.2', vR: 1.2 },
+    ]);
+    return { text: `${items.L} ○ ${items.R}`, choices: ['>', '<', '='], answer: cmpAns(items.vL, items.vR), hint: '统一成小数或分数再比', noEq: true };
+  }
+  if (kind === 'neg') {
+    const L = -rnd(1, 9), R = Math.random() < 0.5 ? -rnd(1, 9) : rnd(0, 9);
+    return { text: `${L} ○ ${R}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '负数比大小', noEq: true };
+  }
+  if (kind === 'ratio') {
+    const a = rnd(2, 9), b = rnd(2, 9), k = rnd(2, 4);
+    const c = a * k, d = b * k + pick([-1, 0, 1, 2]);
+    const L = a / b, R = c / d;
+    return { text: `${a}:${b} ○ ${c}:${d}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '化成比值再比', noEq: true };
+  }
+  const a = rnd(1, 5), b = rnd(2, 5), c = rnd(1, 5), d = rnd(2, 5);
+  const L = (a * d + b * c) / (b * d);
+  const wrong = Math.random() < 0.5;
+  const R = wrong ? roundTo(L + pick([-0.3, -0.1, 0.1, 0.3]), 2) : L;
+  return { text: `${a}/${b} + ${c}/${d} ○ ${fmt(R)}`, choices: ['>', '<', '='], answer: cmpAns(L, R), hint: '先通分计算', noEq: true };
 }
 
 // 等式填空：求方框里的数（加/减两种）
@@ -258,10 +328,10 @@ function genMeasure(m, diff) {
 function genShape(m, diff) {
   if (Math.random() < 0.5) {
     const a = rnd(2, diff === 'easy' ? 10 : 20), b = rnd(2, diff === 'easy' ? 8 : 15);
-    return { text: `🔷 一个长方形，长 ${a} 厘米，宽 ${b} 厘米，它的周长是多少厘米？`, answer: 2 * (a + b), hint: '周长 = (长 + 宽) × 2', noEq: true };
+    return { text: `一个长方形，长 ${a} 厘米，宽 ${b} 厘米，它的周长是多少厘米？`, answer: 2 * (a + b), noEq: true };
   }
   const s = rnd(2, diff === 'easy' ? 10 : 20);
-  return { text: `🔷 一个正方形，边长 ${s} 厘米，它的周长是多少厘米？`, answer: 4 * s, hint: '正方形周长 = 边长 × 4', noEq: true };
+  return { text: `一个正方形，边长 ${s} 厘米，它的周长是多少厘米？`, answer: 4 * s, noEq: true };
 }
 
 // 找规律
@@ -270,37 +340,154 @@ function genPattern(m, diff) {
     const step = pick([2, 3, 5, 10]);
     const s = rnd(1, diff === 'easy' ? 5 : 10);
     const t = [s, s + step, s + 2 * step, s + 3 * step];
-    return { text: `🔢 ${t.join(', ')}, ?`, answer: s + 4 * step, hint: '找规律，填下一个数', noEq: true };
+    return { text: `${t.join(', ')}, ?`, answer: s + 4 * step, hint: '找规律，填下一个数', noEq: true };
   }
   const f = pick([2, 3]), s = rnd(2, 5);
   const t = [s, s * f, s * f * f, s * f * f * f];
-  return { text: `🔢 ${t.join(', ')}, ?`, answer: s * f * f * f * f, hint: '找规律，填下一个数', noEq: true };
+  return { text: `${t.join(', ')}, ?`, answer: s * f * f * f * f, hint: '找规律，填下一个数', noEq: true };
 }
 
-// 统计图表：看 emoji 数量作答
+// 统计图表：用文字描述两组数量关系
 function genStats(m, diff) {
-  const sets = [['🍎', '🍊'], ['⭐', '🌟'], ['🐱', '🐶'], ['🚗', '🚌']];
-  const [e1, e2] = pick(sets);
+  const names = [['苹果', '橘子'], ['男生', '女生'], ['红球', '蓝球'], ['铅笔', '橡皮']];
+  const [n1, n2] = pick(names);
   const hi = diff === 'easy' ? 4 : 7;
   const a = rnd(2, hi), b = rnd(2, hi);
   let text, answer;
-  if (Math.random() < 0.4) { text = `📊 ${e1.repeat(a)} ${e2.repeat(b)}　一共几个？`; answer = a + b; }
-  else if (a >= b) { text = `📊 ${e1.repeat(a)} ${e2.repeat(b)}　${e1}比${e2}多几个？`; answer = a - b; }
-  else { text = `📊 ${e1.repeat(a)} ${e2.repeat(b)}　${e2}比${e1}多几个？`; answer = b - a; }
-  return { text, answer, hint: '数一数，算一算', noEq: true };
+  if (Math.random() < 0.4) { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，一共有几个？`; answer = a + b; }
+  else if (a >= b) { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，${n1}比${n2}多几个？`; answer = a - b; }
+  else { text = `${n1}有 ${a} 个，${n2}有 ${b} 个，${n2}比${n1}多几个？`; answer = b - a; }
+  return { text, answer, hint: '想一想，写出答案', noEq: true };
 }
 
-// 判断题：陈述句对错（约一半故意错）
-function genJudge(m, diff) {
+// 判断题：低年级以简单算式/换算为主；高年级按课标加入概念、运算律、几何等
+function judgeConcept(pool) {
+  const item = pick(pool);
+  const wrong = Math.random() < 0.5;
+  return { text: wrong ? item.false : item.true, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+}
+function genJudge(m, diff, grade) {
   const hi = hiBound(m.max || 50, diff);
-  const kind = pick(['add', 'sub', 'mul', 'compare', 'measure']);
-  let text, answer;
-  if (kind === 'add') { const a = rnd(1, hi), b = rnd(1, hi); const wrong = Math.random() < 0.5; text = `✅ ${a} + ${b} = ${a + b + (wrong ? pick([1, -1]) : 0)}`; answer = wrong ? '错' : '对'; }
-  else if (kind === 'sub') { let a = rnd(5, hi), b = rnd(1, a); const wrong = Math.random() < 0.5; text = `✅ ${a} - ${b} = ${a - b + (wrong ? 1 : 0)}`; answer = wrong ? '错' : '对'; }
-  else if (kind === 'mul') { const a = rnd(2, 9), b = rnd(2, 9); const wrong = Math.random() < 0.5; text = `✅ ${a} × ${b} = ${a * b + (wrong ? 1 : 0)}`; answer = wrong ? '错' : '对'; }
-  else if (kind === 'compare') { const a = rnd(1, hi), b = rnd(1, hi); const wrong = Math.random() < 0.5; const op = a > b ? '＞' : a < b ? '＜' : '＝'; const shown = wrong ? (op === '＞' ? '＜' : op === '＜' ? '＞' : '＜') : op; text = `✅ ${a} ${shown} ${b}`; answer = wrong ? '错' : '对'; }
-  else { const n = rnd(1, 9); const wrong = Math.random() < 0.5; text = `✅ ${n}元 = ${n * 10 + (wrong ? 1 : 0)}角`; answer = wrong ? '错' : '对'; }
-  return { text, choices: ['对', '错'], answer, hint: '判断对错', noEq: true };
+  // 低年级：简单算式/比较/单位换算
+  if (!grade || grade <= 3) {
+    const kind = pick(['add', 'sub', 'mul', 'compare', 'measure']);
+    let text, answer;
+    if (kind === 'add') { const a = rnd(1, hi), b = rnd(1, hi); const wrong = Math.random() < 0.5; text = `${a} + ${b} = ${a + b + (wrong ? pick([1, -1]) : 0)}`; answer = wrong ? '错' : '对'; }
+    else if (kind === 'sub') { let a = rnd(5, hi), b = rnd(1, a); const wrong = Math.random() < 0.5; text = `${a} - ${b} = ${a - b + (wrong ? 1 : 0)}`; answer = wrong ? '错' : '对'; }
+    else if (kind === 'mul') { const a = rnd(2, 9), b = rnd(2, 9); const wrong = Math.random() < 0.5; text = `${a} × ${b} = ${a * b + (wrong ? 1 : 0)}`; answer = wrong ? '错' : '对'; }
+    else if (kind === 'compare') { const a = rnd(1, hi), b = rnd(1, hi); const wrong = Math.random() < 0.5; const op = a > b ? '＞' : a < b ? '＜' : '＝'; const shown = wrong ? (op === '＞' ? '＜' : op === '＜' ? '＞' : '＜') : op; text = `${a} ${shown} ${b}`; answer = wrong ? '错' : '对'; }
+    else { const n = rnd(1, 9); const wrong = Math.random() < 0.5; text = `${n}元 = ${n * 10 + (wrong ? 1 : 0)}角`; answer = wrong ? '错' : '对'; }
+    return { text, choices: ['对', '错'], answer, hint: '判断对错', noEq: true };
+  }
+  // 四年级：小数性质、运算律、几何初步
+  if (grade === 4) {
+    if (Math.random() < 0.5) {
+      return judgeConcept([
+        { true: '0.5 和 0.50 大小相等', false: '0.5 比 0.50 大' },
+        { true: '0.6 大于 0.59', false: '0.6 小于 0.59' },
+        { true: '正方形是特殊的长方形', false: '长方形是特殊的正方形' },
+        { true: '角的大小与边的长短无关', false: '边越长，角就越大' },
+        { true: '0 除以任何不是 0 的数都得 0', false: '0 除以任何数都得 0' },
+        { true: '三位数除以一位数，商可能是两位数', false: '三位数除以一位数，商一定是三位数' },
+        { true: '长方形有 4 个直角', false: '长方形只有 2 个直角' },
+      ]);
+    }
+    const kind = pick(['assoc', 'distr', 'decimal']);
+    if (kind === 'assoc') {
+      const a = rnd(2, 9), b = rnd(2, 9), c = rnd(2, 9);
+      const wrong = Math.random() < 0.5;
+      const left = a * b * c, right = wrong ? left + pick([-2, 2, 3]) : a * (b * c);
+      return { text: `${a} × ${b} × ${c} = ${a} × (${b} × ${c})`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+    }
+    if (kind === 'distr') {
+      const a = rnd(2, 9), b = rnd(2, 9), c = rnd(2, 9);
+      const correct = (a + b) * c;
+      const wrong = Math.random() < 0.5;
+      const shown = wrong ? correct + pick([-5, -3, -2, 2, 3, 5]) : correct;
+      return { text: `(${a} + ${b}) × ${c} = ${shown}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+    }
+    const a = roundTo(rnd(1, 9) + rnd(0, 9) / 10, 1), b = roundTo(rnd(1, 9) + rnd(0, 9) / 10, 1);
+    const sum = fmt(roundTo(a + b, 1));
+    const wrong = Math.random() < 0.5;
+    const shown = wrong ? fmt(roundTo(a + b + pick([-0.2, 0.2, 0.1, -0.1]), 1)) : sum;
+    return { text: `${fmt(a)} + ${fmt(b)} = ${shown}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+  }
+  // 五年级：分数基本性质、小数点移动、因数倍数、几何
+  if (grade === 5) {
+    if (Math.random() < 0.55) {
+      return judgeConcept([
+        { true: '1/2 和 2/4 大小相等', false: '1/2 比 2/4 大' },
+        { true: '分数的分子和分母同时乘相同的数，分数大小不变', false: '分数的分子和分母同时加相同的数，分数大小不变' },
+        { true: '2 是最小的质数', false: '1 是最小的质数' },
+        { true: '一个数的最大因数是它本身', false: '一个数的最大因数是 1' },
+        { true: '0.25 扩大 100 倍是 25', false: '0.25 扩大 100 倍是 2.5' },
+        { true: '长方体有 6 个面', false: '长方体有 8 个面' },
+        { true: '棱长总和 = (长+宽+高) × 4', false: '棱长总和 = 长+宽+高' },
+        { true: '假分数大于或等于 1', false: '假分数都大于 1' },
+      ]);
+    }
+    const kind = pick(['fracAdd', 'decShift', 'multiple']);
+    if (kind === 'fracAdd') {
+      const b = rnd(2, 6), d = rnd(2, 6);
+      const a = rnd(1, b - 1 || 1), c = rnd(1, d - 1 || 1);
+      const correct = fmt(roundTo(a / b + c / d, 2));
+      const wrong = Math.random() < 0.5;
+      const shown = wrong ? fmt(roundTo(a / b + c / d + pick([-0.3, -0.1, 0.1, 0.3]), 2)) : correct;
+      return { text: `${a}/${b} + ${c}/${d} = ${shown}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+    }
+    if (kind === 'decShift') {
+      const n = roundTo(rnd(1, 99) / 100, 2);
+      const wrong = Math.random() < 0.5;
+      const shown = wrong ? fmt(roundTo(n * 100 + pick([-10, -1, 1, 10]), 2)) : fmt(n * 100);
+      return { text: `${fmt(n)} × 100 = ${shown}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+    }
+    let a = rnd(2, 9), b = rnd(2, 36);
+    const wrong = Math.random() < 0.5;
+    if (wrong) { while (b % a === 0) { a = rnd(2, 9); b = rnd(2, 36); } }
+    else { while (b % a !== 0) { a = rnd(2, 9); b = rnd(2, 36); } }
+    return { text: `${b} 是 ${a} 的倍数`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+  }
+  // 六年级：百分数、比和比例、圆、负数、分数乘除
+  if (Math.random() < 0.55) {
+    return judgeConcept([
+      { true: '50% 等于 0.5', false: '50% 等于 0.05' },
+      { true: '1/4 等于 25%', false: '1/4 等于 4%' },
+      { true: '圆的周长是直径的 π 倍', false: '圆的周长是半径的 π 倍' },
+      { true: '半径扩大 2 倍，面积扩大 4 倍', false: '半径扩大 2 倍，面积扩大 2 倍' },
+      { true: '比的前项和后项同时乘 2，比值不变', false: '比的前项和后项同时加 2，比值不变' },
+      { true: '-5 小于 -3', false: '-5 大于 -3' },
+      { true: '0 既不是正数也不是负数', false: '0 是正数' },
+      { true: '圆柱的上下两个面是完全相同的圆', false: '圆柱的上下两个面大小不同' },
+    ]);
+  }
+  const kind = pick(['percent', 'fracMul', 'ratio', 'fracDiv']);
+  if (kind === 'percent') {
+    const p = pick([10, 20, 25, 50, 75]), base = pick([20, 40, 60, 80, 100]);
+    const correct = Math.round(base * p / 100);
+    const wrong = Math.random() < 0.5;
+    const shown = wrong ? correct + pick([-5, -2, 2, 5]) : correct;
+    return { text: `${base} 的 ${p}% 是 ${shown}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+  }
+  if (kind === 'fracMul') {
+    const a = rnd(1, 5), b = rnd(2, 5), c = rnd(1, 5), d = rnd(2, 5);
+    const correct = fmt(roundTo((a * c) / (b * d), 2));
+    const wrong = Math.random() < 0.5;
+    const shown = wrong ? fmt(roundTo((a * c) / (b * d) + pick([-0.2, -0.1, 0.1, 0.2]), 2)) : correct;
+    return { text: `${a}/${b} × ${c}/${d} = ${shown}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+  }
+  if (kind === 'fracDiv') {
+    const a = rnd(1, 5), b = rnd(2, 5), c = rnd(1, 5), d = rnd(2, 5);
+    const correct = fmt(roundTo((a * d) / (b * c), 2));
+    const wrong = Math.random() < 0.5;
+    const shown = wrong ? fmt(roundTo((a * d) / (b * c) + pick([-0.2, -0.1, 0.1, 0.2]), 2)) : correct;
+    return { text: `${a}/${b} ÷ ${c}/${d} = ${shown}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
+  }
+  const a = rnd(2, 9), b = rnd(2, 9), k = rnd(2, 4);
+  const c = a * k;
+  const wrong = Math.random() < 0.5;
+  let d = b * k;
+  if (wrong) { d = d + pick([-2, -1, 1, 2]); if (d <= 0) d = b * k + 1; }
+  return { text: `${a}:${b} = ${c}:${d}`, choices: ['对', '错'], answer: wrong ? '错' : '对', hint: '判断对错', noEq: true };
 }
 
 function generateQuestion(module, opts) {
@@ -321,13 +508,13 @@ function generateQuestion(module, opts) {
     case 'fracmul': q = genFracMul(module, diff); break;
     case 'fracMix': q = genFracMix(module, diff); break;
     case 'word': q = genWord(module, diff); break;
-    case 'compare': q = genCompare(module, diff); break;
+    case 'compare': q = genCompare(module, diff, opts.grade); break;
     case 'fill': q = genFill(module, diff); break;
     case 'measure': q = genMeasure(module, diff); break;
     case 'shape': q = genShape(module, diff); break;
     case 'pattern': q = genPattern(module, diff); break;
     case 'stats': q = genStats(module, diff); break;
-    case 'judge': q = genJudge(module, diff); break;
+    case 'judge': q = genJudge(module, diff, opts.grade); break;
     default: q = genAdd({ max: 20 }, diff);
   }
   // 若题干本身已含 "=" 或 "□"，前端不要再自动追加 "= ?"，避免 "□ × 2 = 18 = ?"
