@@ -1,0 +1,18 @@
+# 卡密服务器（部署在卖家飞牛，供买家主系统激活/续费/校验）
+# 用法：cd license-server && docker compose up -d --build
+# 公网暴露：在飞牛路由/反代上把本容器的 4444 端口映射出去，或配置子域名反代 + SSL
+services:
+  license-server:
+    build: .
+    container_name: kid-math-license
+    restart: unless-stopped
+    ports:
+      - "4444:4444"
+    environment:
+      - PORT=4444
+      - HOST=0.0.0.0
+      # 卖家管理后台密码（务必修改！）
+      - ADMIN_PASSWORD=061204
+    volumes:
+      # 卡密数据持久化到 ./data/licenses.json（飞牛文件管理器可直接看到）
+      - ./data:/app/data

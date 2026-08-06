@@ -1,11 +1,35 @@
-// 端到端验证新积分规则
+// 端到端验证新积分规则（自包含：自动起卡密服务器 + 主系统，创建家庭需卡密）
 const http = require('http');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const NODE = process.execPath;
+const ROOT = path.join(__dirname, '..');
+const LIC_PORT = 4595;
+const APP_PORT = 3470;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'scoring-'));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let licProc, appProc;
+function boot() {
+  licProc = spawn(NODE, [path.join(ROOT, 'license-server', 'server.js')], { env: { ...process.env, PORT: String(LIC_PORT), DATA_DIR: path.join(TMP, 'lic'), ADMIN_PASSWORD: 'x' }, stdio: 'ignore' });
+  appProc = spawn(NODE, [path.join(ROOT, 'server.js')], { env: { ...process.env, PORT: String(APP_PORT), DATA_DIR: path.join(TMP, 'app'), LICENSE_SERVER_URL: 'http://127.0.0.1:' + LIC_PORT }, stdio: 'ignore' });
+}
+async function waitReady() {
+  for (let i = 0; i < 40; i++) {
+    try { await req('GET', '/api/version'); return; }
+    catch (e) { await sleep(250); }
+  }
+  throw new Error('服务未就绪');
+}
 
 function req(method, path, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const r = http.request({
-      host: 'localhost', port: 3470, path, method,
+      host: 'localhost', port: APP_PORT, path, method,
       headers: { 'Content-Type': 'application/json', ...headers },
     }, (res) => {
       let s = '';
@@ -24,8 +48,12 @@ function assert(cond, msg) {
 }
 
 (async () => {
-  // 加入家庭（create）
-  const auth = await req('POST', '/api/auth', { pin: '1234', create: true });
+  boot();
+  await waitReady();
+  // 生成一张卡密用于创建家庭
+  const key = (await (await fetch(`http://localhost:${LIC_PORT}/api/admin/gen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'x', days: 365 }) })).json()).key;
+  // 加入家庭（create，需卡密）
+  const auth = await req('POST', '/api/auth', { pin: '1234', create: true, key });
   const FID = auth.familyId;
   const H = { 'X-Family-Id': FID };
 
@@ -94,4 +122,8 @@ function assert(cond, msg) {
   assert(r6.earned === 3, `闯关 60% 仅每题+1×3 = 3，实际 ${r6.earned}`);
 
   console.log('\n测试完成。');
-})();
+})().finally(() => {
+  try { licProc && licProc.kill(); } catch (e) {}
+  try { appProc && appProc.kill(); } catch (e) {}
+  fs.rmSync(TMP, { recursive: true, force: true });
+});

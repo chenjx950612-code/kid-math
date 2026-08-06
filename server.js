@@ -11,12 +11,16 @@ const { execSync } = require('child_process');
 
 const PORT = process.env.PORT || 3333;
 const HOST = process.env.HOST || '0.0.0.0';
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // 一键更新：超级管理员密码（点击更新按钮时要求输入；可用环境变量 SUPER_ADMIN_PASSWORD 覆盖）
 const SUPER_ADMIN = process.env.SUPER_ADMIN_PASSWORD || '061204';
+
+// 卡密服务器（卖家提供）：创建家庭/续费/改PIN同步/定期校验时调用；为空则禁用在线激活
+const LICENSE_SERVER_URL = (process.env.LICENSE_SERVER_URL || '').trim().replace(/\/+$/, '');
+const LICENSE_CHECK_INTERVAL = 6 * 3600 * 1000; // 每 6 小时在线校验一次
 
 // 版本号：取当前 git 提交短哈希；非 git 环境回退为 local
 let APP_VERSION = 'local';
@@ -114,6 +118,17 @@ function load() {
     }
   }
 
+  // 卡密授权迁移：实例指纹（installationId）+ 旧家庭补默认 license（自家已有数据不被卡）
+  let migrated = false;
+  if (!data.installationId) { data.installationId = crypto.randomUUID(); migrated = true; }
+  for (const f of data.families) {
+    if (!f.license) {
+      f.license = { key: 'legacy', exp: new Date('2099-12-31T23:59:59Z').getTime(), valid: true, lastCheckedAt: null };
+      migrated = true;
+    }
+  }
+  if (migrated) fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+
   return data;
 }
 
@@ -127,6 +142,62 @@ function getFamily(req) {
   const fid = (req.headers['x-family-id'] || '').toString();
   if (!fid) return null;
   return DB.families.find((f) => f.id === fid) || null;
+}
+
+// ---------- 卡密授权（license） ----------
+function licenseValid(f) {
+  return !!f.license && f.license.valid !== false && f.license.exp > Date.now();
+}
+function licenseDaysLeft(f) {
+  return f.license ? Math.max(0, Math.ceil((f.license.exp - Date.now()) / 86400000)) : 0;
+}
+
+// 调用中心卡密服务器（离线/失败返回 {offline:true}）
+function callLicense(apiPath, body) {
+  return new Promise((resolve) => {
+    if (!LICENSE_SERVER_URL) return resolve({ offline: true, error: 'LICENSE_SERVER_URL 未配置' });
+    let url;
+    try { url = new URL(apiPath, LICENSE_SERVER_URL + '/'); } catch (e) { return resolve({ offline: true, error: 'LICENSE_SERVER_URL 无效' }); }
+    const mod = url.protocol === 'https:' ? require('https') : require('http');
+    const payload = JSON.stringify(body || {});
+    const req = mod.request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 8000,
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({ offline: true, error: 'bad response' }); } });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ offline: true, error: 'timeout' }); });
+    req.on('error', () => { req.destroy(); resolve({ offline: true, error: 'network' }); });
+    req.end(payload);
+  });
+}
+
+// 定期在线校验所有家庭（吊销/后台延期生效；网络失败时用本地 exp 兜底，宽容模式）
+async function verifyLicenses() {
+  if (!LICENSE_SERVER_URL) return;
+  for (const f of DB.families) {
+    if (!f.license || f.license.key === 'legacy') continue;
+    const r = await callLicense('/api/license/verify', { key: f.license.key, installationId: DB.installationId });
+    if (r && r.valid === false) {
+      if (f.license.valid !== false || (r.exp && f.license.exp !== r.exp)) {
+        f.license.valid = false;
+        if (r.exp) f.license.exp = r.exp;
+        f.license.lastCheckedAt = new Date().toISOString();
+        save();
+      }
+    } else if (r && r.valid === true) {
+      if (f.license.valid !== true || f.license.exp !== r.exp) {
+        f.license.valid = true;
+        f.license.exp = r.exp;
+        f.license.lastCheckedAt = new Date().toISOString();
+        save();
+      }
+    }
+    // offline/网络失败：保持本地状态继续可用
+  }
 }
 
 // ---------- 业务：积分（家庭作用域） ----------
@@ -313,10 +384,21 @@ async function handleApi(req, res, pathname, segs) {
     let isNew = false;
     if (!f) {
       if (b.create === false) return send(res, 200, { ok: false, error: 'PIN 不存在' });
+      // 创建家庭：一卡密一家庭，需在线激活并绑定（installationId + PIN）
+      const key = String(b.key || '').trim().toUpperCase();
+      if (!key) return send(res, 200, { ok: false, error: '创建家庭需要激活卡密', licenseRequired: true });
+      if (!LICENSE_SERVER_URL) return send(res, 200, { ok: false, error: '系统未配置卡密服务器，无法创建新家庭，请联系卖家' });
+      const r = await callLicense('/api/license/activate', { key, pin, installationId: DB.installationId });
+      if (r.offline) return send(res, 200, { ok: false, error: '无法连接卡密服务器，请检查网络后重试' });
+      if (!r.ok) return send(res, 200, { ok: false, error: r.error || '卡密激活失败' });
       f = newFamily(pin);
+      f.license = { key, exp: r.exp, valid: true, lastCheckedAt: new Date().toISOString() };
       DB.families.push(f);
       save();
       isNew = true;
+    } else {
+      // 加入已有家庭：只需 PIN；校验该家庭 license 有效
+      if (!licenseValid(f)) return send(res, 200, { ok: false, error: '该家庭许可证已过期或失效，请联系卖家续费', licenseExpired: true });
     }
     return send(res, 200, { ok: true, familyId: f.id, isNew });
   }
@@ -324,6 +406,62 @@ async function handleApi(req, res, pathname, segs) {
   // 其余端点都需要 X-Family-Id
   const family = getFamily(req);
   if (!family) return send(res, 401, { error: 'no family' });
+
+  // 许可证状态（不受过期拦截，前端展示/续费用）
+  if (pathname === '/api/license/state' && method === 'GET') {
+    const keyTail = family.license && family.license.key !== 'legacy' ? family.license.key.slice(-4) : (family.license ? 'legacy' : '');
+    return send(res, 200, {
+      valid: licenseValid(family),
+      exp: family.license ? family.license.exp : 0,
+      daysLeft: licenseDaysLeft(family),
+      keyTail,
+      installationId: DB.installationId,
+      licenseServer: !!LICENSE_SERVER_URL,
+    });
+  }
+  // 续费：换新卡密，覆盖绑定（不受过期拦截）
+  if (pathname === '/api/license/renew' && method === 'POST') {
+    const b = await readBody(req);
+    const key = String(b.key || '').trim().toUpperCase();
+    if (!key) return send(res, 200, { ok: false, error: '请输入新卡密' });
+    if (!LICENSE_SERVER_URL) return send(res, 200, { ok: false, error: '系统未配置卡密服务器，请联系卖家' });
+    const r = await callLicense('/api/license/renew', { key, pin: String(family.parentPin), installationId: DB.installationId });
+    if (r.offline) return send(res, 200, { ok: false, error: '无法连接卡密服务器，请检查网络后重试' });
+    if (!r.ok) return send(res, 200, { ok: false, error: r.error || '续费失败' });
+    family.license = { key, exp: r.exp, valid: true, lastCheckedAt: new Date().toISOString() };
+    save();
+    return send(res, 200, { ok: true, exp: r.exp, daysLeft: Math.max(0, Math.ceil((r.exp - Date.now()) / 86400000)) });
+  }
+
+  // 版本号（前端轮询用，不受 license 拦截）
+  if (pathname === '/api/version' && method === 'GET') {
+    return send(res, 200, { version: APP_VERSION });
+  }
+
+  // 一键更新（管理员操作，不受 license 拦截）
+  if (pathname === '/api/admin/update' && method === 'POST') {
+    const b = await readBody(req);
+    if (String(b.password) !== SUPER_ADMIN) return send(res, 200, { ok: false, error: '超级管理员密码错误' });
+    try {
+      try { execSync('git config --global --add safe.directory /app', { cwd: '/root' }); } catch (e2) { /* 已配置过则忽略 */ }
+      execSync('git stash --include-untracked || true', { cwd: __dirname });
+      const out = execSync('git pull --ff-only', { cwd: __dirname }).toString();
+      try { APP_VERSION = execSync('git rev-parse --short HEAD', { cwd: __dirname }).toString().trim(); } catch (e) {}
+      save();
+      const noChange = /Already up to date\./.test(out);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, version: APP_VERSION, output: out, noChange }));
+      if (!noChange) setTimeout(() => process.exit(0), 600);
+      return;
+    } catch (e) {
+      return send(res, 200, { ok: false, error: '更新失败：' + String(e.message || e) });
+    }
+  }
+
+  // 许可证过期/失效拦截（业务接口一律 403）
+  if (!licenseValid(family)) {
+    return send(res, 403, { error: 'license expired', licenseExpired: true });
+  }
 
   if (pathname === '/api/children' && method === 'GET') {
     return send(res, 200, family.children);
@@ -403,7 +541,13 @@ async function handleApi(req, res, pathname, segs) {
       return send(res, 200, { ok: false, error: '新 PIN 已被其他家庭使用' });
     }
     family.parentPin = newPin; save();
-    return send(res, 200, { ok: true });
+    // 同步卡密绑定（尽力而为：失败不阻断本地修改，下次联网校验自动补）
+    let synced = true;
+    if (family.license && family.license.key !== 'legacy' && LICENSE_SERVER_URL) {
+      const r = await callLicense('/api/license/update-pin', { key: family.license.key, installationId: DB.installationId, pin: newPin });
+      synced = !r.offline && r.ok !== false;
+    }
+    return send(res, 200, { ok: true, synced });
   }
   if (pathname.startsWith('/api/redemptions/') && segs[2]) {
     const id = segs[2];
@@ -420,31 +564,6 @@ async function handleApi(req, res, pathname, segs) {
       return { id: r.id, childName: c.name || '?', rewardName: rw.name || '?', icon: rw.icon || '🎁', cost: rw.cost || 0, redeemedAt: r.redeemedAt, fulfilled: r.fulfilled };
     });
     return send(res, 200, list);
-  }
-
-  // 版本号（前端轮询用）
-  if (pathname === '/api/version' && method === 'GET') {
-    return send(res, 200, { version: APP_VERSION });
-  }
-
-  // 一键更新（家庭作用域无关，超级管理员密码）
-  if (pathname === '/api/admin/update' && method === 'POST') {
-    const b = await readBody(req);
-    if (String(b.password) !== SUPER_ADMIN) return send(res, 200, { ok: false, error: '超级管理员密码错误' });
-    try {
-      try { execSync('git config --global --add safe.directory /app', { cwd: '/root' }); } catch (e2) { /* 已配置过则忽略 */ }
-      execSync('git stash --include-untracked || true', { cwd: __dirname });
-      const out = execSync('git pull --ff-only', { cwd: __dirname }).toString();
-      try { APP_VERSION = execSync('git rev-parse --short HEAD', { cwd: __dirname }).toString().trim(); } catch (e) {}
-      save();
-      const noChange = /Already up to date\./.test(out);
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, version: APP_VERSION, output: out, noChange }));
-      if (!noChange) setTimeout(() => process.exit(0), 600);
-      return;
-    } catch (e) {
-      return send(res, 200, { ok: false, error: '更新失败：' + String(e.message || e) });
-    }
   }
 
   return send(res, 404, { error: 'api not found' });
@@ -465,3 +584,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`小学算术练习系统已启动: http://${HOST}:${PORT}`);
 });
+
+// 卡密授权：启动 3 秒后异步在线校验一次（不阻塞启动），之后每 6 小时校验
+setTimeout(verifyLicenses, 3000);
+setInterval(verifyLicenses, LICENSE_CHECK_INTERVAL);

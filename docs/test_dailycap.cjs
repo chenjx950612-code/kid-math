@@ -1,7 +1,36 @@
-// 端到端验证每日上限修复：还原「有错题→卡94→订正不加分」场景
-const BASE = 'http://localhost:3460';
+// 端到端验证每日上限修复：还原「有错题→卡94→订正不加分」场景（自包含，创建家庭需卡密）
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const NODE = process.execPath;
+const ROOT = path.join(__dirname, '..');
+const LIC_PORT = 4596;
+const APP_PORT = 3460;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'dailycap-'));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let licProc, appProc;
+function boot() {
+  licProc = spawn(NODE, [path.join(ROOT, 'license-server', 'server.js')], { env: { ...process.env, PORT: String(LIC_PORT), DATA_DIR: path.join(TMP, 'lic'), ADMIN_PASSWORD: 'x' }, stdio: 'ignore' });
+  appProc = spawn(NODE, [path.join(ROOT, 'server.js')], { env: { ...process.env, PORT: String(APP_PORT), DATA_DIR: path.join(TMP, 'app'), LICENSE_SERVER_URL: 'http://127.0.0.1:' + LIC_PORT }, stdio: 'ignore' });
+}
+async function waitReady() {
+  for (let i = 0; i < 40; i++) {
+    try { await fetch(`http://localhost:${APP_PORT}/api/version`); return; }
+    catch (e) { await sleep(250); }
+  }
+  throw new Error('服务未就绪');
+}
+
+const BASE = `http://localhost:${APP_PORT}`;
+
+(async () => {
+boot();
+await waitReady();
+const key = (await (await fetch(`http://localhost:${LIC_PORT}/api/admin/gen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'x', days: 365 }) })).json()).key;
 const fid = await (async () => {
-  const r = await fetch(`${BASE}/api/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: '7777', create: true }) });
+  const r = await fetch(`${BASE}/api/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: '7777', create: true, key }) });
   const j = await r.json();
   console.log('auth:', JSON.stringify(j));
   return j.familyId;
@@ -30,39 +59,43 @@ async function correct() {
 
 function assert(cond, msg) { console.log((cond ? '✅' : '❌') + ' ' + msg); if (!cond) process.exitCode = 1; }
 
-// 1) 8对2错：净增应为 +14，dailyEarned 必须等于 points（不能虚高成16）
+// 1) 8对2错：新规则 对+1×8、错0 → 净增 +8，dailyEarned 必须等于 points
 let s = await session(8, 2);
 console.log('S1:', JSON.stringify(s));
-assert(s.earned === 14, `8对2错 净增=${s.earned}（应为14）`);
+assert(s.earned === 8, `8对2错 净增=${s.earned}（应为8）`);
 assert(s.dailyEarned === s.points, `dailyEarned(${s.dailyEarned}) == points(${s.points})（旧bug会虚高）`);
-assert(s.points === 14, `points=${s.points}（应为14）`);
+assert(s.points === 8, `points=${s.points}（应为8）`);
 
-// 2) 连续练习攒到 94 分（含错题，净增法）
-for (let i = 0; i < 5; i++) { s = await session(8, 2); } // +14*5 = 70 → 84
-s = await session(5, 5); // +5 → 89
-s = await session(5, 5); // +5 → 94
+// 2) 连续练习攒到 94 分（新规则每题+1，含错题不扣）
+for (let i = 0; i < 9; i++) { s = await session(8, 2); } // +8*9 = 72 → 80
+s = await session(5, 5); // +5 → 85
+s = await session(5, 5); // +5 → 90
+s = await session(4, 6); // +4 → 94
 console.log('累积后:', JSON.stringify(s));
 assert(s.points === 94, `攒到 points=${s.points}（应为94）`);
 assert(s.dailyEarned === 94, `dailyEarned=${s.dailyEarned}（应为94，旧bug会=100）`);
 
-// 3) 关键：此时订正 +1 应当生效（旧bug会判定已满100而给0）
+// 3) 订正不再加分（新规则），但每日额度不被订正占用
 let c = await correct();
 console.log('订正:', JSON.stringify(c));
-assert(c.delta === 1, `订正 delta=${c.delta}（应为1，旧bug给0）`);
-assert(c.points === 95, `订正后 points=${c.points}（应为95）`);
-assert(c.dailyEarned === 95, `订正后 dailyEarned=${c.dailyEarned}（应为95）`);
+assert(c.delta === 0, `订正 delta=${c.delta}（新规则订正不加分=0）`);
+assert(c.points === 94, `订正后 points=${c.points}（应为94）`);
 
 // 4) 继续练习直到真正封顶 100
-s = await session(10, 0); // 房间=5 → 实际+5
+s = await session(10, 0); // 房间=6 → 实际+6
 console.log('封顶前最后一段:', JSON.stringify(s));
 assert(s.points === 100, `封顶 points=${s.points}（应为100）`);
 assert(s.dailyEarned === 100, `封顶 dailyEarned=${s.dailyEarned}（应为100）`);
 assert(s.dailyCapReached === true, `dailyCapReached=${s.dailyCapReached}（应true）`);
 
-// 5) 封顶后再订正不再加分
+// 5) 封顶后再订正：仍不加分
 c = await correct();
 console.log('封顶后订正:', JSON.stringify(c));
 assert(c.delta === 0, `封顶后订正 delta=${c.delta}（应为0）`);
-assert(c.dailyCapped === true, `封顶后 dailyCapped=${c.dailyCapped}（应true）`);
 
 console.log('\n=== 测试结束 ===');
+})().finally(() => {
+  try { licProc && licProc.kill(); } catch (e) {}
+  try { appProc && appProc.kill(); } catch (e) {}
+  fs.rmSync(TMP, { recursive: true, force: true });
+});

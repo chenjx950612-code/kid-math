@@ -31,6 +31,14 @@
       if (typeof renderFamilyAuth === 'function') renderFamilyAuth();
       throw new Error('家庭身份失效，请重新加入家庭');
     }
+    if (r.status === 403) {
+      const d = await r.json().catch(() => ({}));
+      if (d.licenseExpired && typeof renderRenew === 'function') {
+        renderRenew();
+        throw new Error('许可证已过期，请续费');
+      }
+      throw new Error(d.error || '权限不足');
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   }
@@ -549,7 +557,7 @@
     else if (S.parentTab === 'stats') await statsTab(b);
     else if (S.parentTab === 'rewards') rewardsTab(b);
     else if (S.parentTab === 'redeem') await redeemTab(b);
-    else if (S.parentTab === 'settings') settingsTab(b);
+    else if (S.parentTab === 'settings') await settingsTab(b);
   }
   function childrenTab(b) {
     const kids = S._children;
@@ -615,7 +623,20 @@
     b.innerHTML = html;
   }
   async function fulfill(id) { await api('PUT', '/api/redemptions/' + id); redeemTab(document.getElementById('parentBody')); }
-  function settingsTab(b) {
+  async function settingsTab(b) {
+    let lic = null;
+    try { lic = await api('GET', '/api/license/state'); } catch (e) { /* 忽略 */ }
+    let licHtml = '';
+    if (lic) {
+      const expStr = lic.exp ? new Date(lic.exp).toLocaleDateString('zh-CN') : '-';
+      const daysLeft = lic.daysLeft ?? 0;
+      const low = lic.valid && daysLeft < 14;
+      licHtml = `<div class="panel" style="margin-top:14px"><h3 style="text-align:center;color:var(--purple)">许可证</h3>
+        <p class="muted center">状态：${lic.valid ? '✅ 有效' : '⏳ 已过期/失效'}</p>
+        <p class="muted center">有效期至：${expStr}（剩余 ${daysLeft} 天）</p>
+        ${lic.keyTail && lic.keyTail !== 'legacy' ? `<p class="muted center">卡密尾号：<code>${lic.keyTail}</code></p>` : ''}
+        ${!lic.valid ? '<button class="btn btn-coral btn-block" onclick="renderRenew()">去续费</button>' : (low ? '<button class="btn btn-coral btn-block" onclick="renderRenew()">即将到期，去续费</button>' : '')}</div>`;
+    }
     b.innerHTML = `<div class="panel"><h3 style="text-align:center;color:var(--purple)">修改家长 PIN</h3>
       <div class="field"><label>旧 PIN</label><input id="oldpin" type="password" inputmode="numeric"/></div>
       <div class="field"><label>新 PIN</label><input id="newpin" type="password" inputmode="numeric"/></div>
@@ -625,7 +646,8 @@
       <p class="muted center">当前家庭 ID：<code style="font-size:11px;color:#666">${getFamilyId() ? getFamilyId().slice(0, 8) + '…' : '无'}</code></p>
       <button class="btn btn-blue btn-block" onclick="switchFamily()">切换/退出家庭</button></div>
       <div class="panel" style="margin-top:14px"><h3 style="text-align:center;color:var(--purple)">系统更新</h3>
-      <button class="btn btn-coral btn-block" onclick="openUpdate()">🔄 一键更新系统</button></div>`;
+      <button class="btn btn-coral btn-block" onclick="openUpdate()">🔄 一键更新系统</button></div>
+      ${licHtml}`;
   }
 
   // ---------- 一键更新 ----------
@@ -722,38 +744,49 @@
   function backHome() { renderHome(); }
 
   // ---------- 启动 ----------
-  // 家庭认证页：输入家庭 PIN（加入已有家庭），或选择"创建新家庭"
+  // 家庭认证页：加入（仅 PIN）/ 创建（PIN + 激活卡密，一卡密一家庭）
+  let _authTab = 'join';
+  function setAuthTab(t) { _authTab = t; renderFamilyAuth(); }
   async function renderFamilyAuth() {
     let state = { hasFamilies: false };
     try { state = await fetch('/api/auth/state').then((r) => r.json()); } catch (e) { state = { hasFamilies: false }; }
     document.body.style.background = '';
+    const createMode = _authTab === 'create';
     $app.innerHTML = `
       <div class="welcome">
         <div class="welcome-emoji">🏠</div>
         <h1 class="title">算术小乐园</h1>
-        <p class="subtitle">${state.hasFamilies ? '输入家庭 PIN 加入已有家庭' : '首次使用，输入 PIN 创建你的家庭'}</p>
-        <div class="panel" style="max-width:380px;margin:16px auto">
+        <p class="subtitle">加入已有家庭，或用激活卡密创建新家庭</p>
+        <div class="tabs" style="max-width:380px;margin:0 auto 14px">
+          <div class="tab ${!createMode ? 'active' : ''}" onclick="setAuthTab('join')">加入家庭</div>
+          <div class="tab ${createMode ? 'active' : ''}" onclick="setAuthTab('create')">创建家庭</div>
+        </div>
+        <div class="panel" style="max-width:380px;margin:0 auto">
           <div class="field"><label>家庭 PIN（4-8 位数字）</label>
             <input id="fampin" type="password" inputmode="numeric" maxlength="8" placeholder="例如 1234" autocomplete="off"/></div>
-          <button class="btn btn-primary btn-block" onclick="submitFamilyPin(${state.hasFamilies})">${state.hasFamilies ? '加入家庭' : '创建家庭'}</button>
-          ${state.hasFamilies ? '<button class="btn btn-blue btn-block" onclick="submitFamilyPin(false)">用此 PIN 创建新家庭</button>' : ''}
+          <div class="field" id="keyfield" style="${createMode ? '' : 'display:none'}"><label>激活卡密</label>
+            <input id="famkey" type="text" placeholder="MATH-XXXX-XXXX-XXXX" autocomplete="off"/></div>
+          <button class="btn btn-primary btn-block" onclick="submitFamilyPin()">${createMode ? '创建家庭' : '加入家庭'}</button>
           <p class="muted center" id="famauthmsg" style="min-height:18px;margin-top:8px"></p>
         </div>
-        <p class="muted center" style="margin-top:8px">同一个 PIN 在多台设备（手机/Pad）登录即可共享同一家庭</p>
+        <p class="muted center" style="margin-top:8px">同一家庭多台设备（手机/Pad）用 PIN 登录即可共享；创建新家庭需要激活卡密</p>
       </div>`;
     const pinInput = document.getElementById('fampin');
     if (pinInput) pinInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') submitFamilyPin(state.hasFamilies);
+      if (e.key === 'Enter') submitFamilyPin();
     });
     setTimeout(() => pinInput && pinInput.focus(), 100);
   }
-  async function submitFamilyPin(joinOnly) {
+  async function submitFamilyPin() {
     const pin = document.getElementById('fampin').value.trim();
+    const createMode = _authTab === 'create';
+    const key = createMode ? (document.getElementById('famkey').value || '').trim() : '';
     const msg = document.getElementById('famauthmsg');
     if (!/^\d{4,8}$/.test(pin)) { msg.textContent = 'PIN 需为 4-8 位数字'; return; }
+    if (createMode && !key) { msg.textContent = '创建家庭需要激活卡密'; return; }
     msg.textContent = '正在处理…';
     try {
-      const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, create: joinOnly ? false : true }) });
+      const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, key, create: createMode }) });
       const data = await r.json();
       if (!data.ok) { msg.textContent = data.error || '失败'; return; }
       setFamilyId(data.familyId);
@@ -769,7 +802,41 @@
     localStorage.removeItem('math_role');
     localStorage.removeItem('math_parent_auth');
     document.querySelectorAll('.modal-mask').forEach((m) => m.remove());
+    _authTab = 'join';
     renderFamilyAuth();
+  }
+
+  // 续费页：许可证过期/失效时展示
+  function renderRenew() {
+    document.body.style.background = '';
+    $app.innerHTML = `
+      <div class="welcome">
+        <div class="welcome-emoji">⏳</div>
+        <h1 class="title">许可证已到期</h1>
+        <p class="subtitle">请联系卖家购买新卡密续费</p>
+        <div class="panel" style="max-width:380px;margin:16px auto">
+          <div class="field"><label>新激活卡密</label>
+            <input id="renewkey" type="text" placeholder="MATH-XXXX-XXXX-XXXX" autocomplete="off"/></div>
+          <button class="btn btn-primary btn-block" onclick="doRenew()">续费</button>
+          <p class="muted center" id="renewmsg" style="min-height:18px;margin-top:8px"></p>
+        </div>
+        <p class="muted center" style="margin-top:8px"><a href="#" onclick="switchFamily()">退出当前家庭</a></p>
+      </div>`;
+    setTimeout(() => { const el = document.getElementById('renewkey'); if (el) el.focus(); }, 100);
+  }
+  async function doRenew() {
+    const key = (document.getElementById('renewkey').value || '').trim();
+    const msg = document.getElementById('renewmsg');
+    if (!key) { msg.textContent = '请输入卡密'; return; }
+    msg.textContent = '正在处理…';
+    try {
+      const r = await api('POST', '/api/license/renew', { key });
+      if (!r.ok) { msg.textContent = r.error || '续费失败'; return; }
+      msg.textContent = '✅ 续费成功';
+      setTimeout(() => init(), 500);
+    } catch (e) {
+      msg.textContent = '网络错误，请重试';
+    }
   }
 
   async function init() {
@@ -790,6 +857,11 @@
       return;
     }
     REWARDS = await api('GET', '/api/rewards');
+    // 检查许可证状态：失效则进续费页
+    try {
+      const lic = await api('GET', '/api/license/state');
+      if (lic && !lic.valid) { renderRenew(); return; }
+    } catch (e) { /* 网络异常忽略，业务接口会兜底 */ }
     const savedRole = localStorage.getItem('math_role');
     if (savedRole === 'parent') { openParent(); }
     else if (savedRole === 'child') {
@@ -810,7 +882,8 @@
     openEditGrade, pickNewGrade, saveGrade, closeGradeMask,
     enterAsChild, enterAsParent, switchToParent, switchToChild,
     openUpdate, closeUpdate, doUpdate,
-    renderFamilyAuth, submitFamilyPin, switchFamily,
+    renderFamilyAuth, setAuthTab, submitFamilyPin, switchFamily,
+    renderRenew, doRenew,
   });
 
   init();
