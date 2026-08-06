@@ -894,7 +894,7 @@
 
   Object.assign(window, {
     selectChild, openAddChild, pickAvatar, saveChild, closeAdd, backHome,
-    renderChildMenu, gotoGrade, selectGrade, selectModule, selectMode,
+    renderChildMenu, gotoGrade, selectGrade, setDifficulty, selectModule, selectMode,
     keyTap, choiceTap, gotoWrong, startCorrection, gotoStore, redeem,
     openParent, submitPin, closeModal, parentTab, renderParent,
     openRewardModal, pickIcon, saveReward, deleteReward, closeReward,

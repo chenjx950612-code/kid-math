@@ -2,7 +2,7 @@
 // 原则：每个年级的运算范围严格按课标划定，绝不超纲。
 // 特性：① 每个题型支持 易/中/难 三档难度；② 同一知识点多种问法（变体）；
 //       ③ 新增应用题/比大小/填空/单位换算/图形周长/找规律/判断/统计 等题型；
-//       ④ 乘除法附带点阵可视化数据（dots），帮助低年级直观理解。
+//       ④ 含 = 或 □ 的题目自动标记 noEq，避免渲染时再追加 "= ?" 造成重复。
 
 function rnd(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
 function pick(arr) { return arr[rnd(0, arr.length - 1)]; }
@@ -22,9 +22,8 @@ function hiBound(max, diff) {
   if (diff === 'hard') return max;
   return Math.min(max, Math.max(10, Math.floor(max * 0.5)));
 }
-// 给乘除法题附带点阵（乘积 ≤ 60 才显示，避免过多）
+// 点阵可视化已关闭：低年级用户反馈不需要，保留函数名以便后续按需开启。
 function withDots(q, a, b) {
-  if (a * b <= 60) { const x = Math.min(a, b), y = Math.max(a, b); q.dots = { a: x, b: y }; }
   return q;
 }
 
@@ -132,9 +131,9 @@ function genMul(m, diff) {
   const bEff = diff === 'easy' ? Math.min(bMax, 4) : bMax;
   const a = rnd(2, aEff), b = rnd(2, bEff);
   const variant = pick(['std', 'find1', 'find2']);
-  if (variant === 'std') return withDots({ text: `${a} × ${b}`, answer: a * b }, a, b);
-  if (variant === 'find1') return withDots({ text: `□ × ${b} = ${a * b}`, answer: a }, a, b);
-  return withDots({ text: `${a} × □ = ${a * b}`, answer: b }, a, b);
+  if (variant === 'std') return { text: `${a} × ${b}`, answer: a * b };
+  if (variant === 'find1') return { text: `□ × ${b} = ${a * b}`, answer: a };
+  return { text: `${a} × □ = ${a * b}`, answer: b };
 }
 function genDiv(m, diff) {
   const aMax = m.aMax || 9, bMax = m.bMax || 9;
@@ -142,8 +141,8 @@ function genDiv(m, diff) {
   const bEff = diff === 'easy' ? Math.min(bMax, 4) : bMax;
   const variant = pick(['std', 'finddiv']);
   const b = rnd(2, bEff), a = rnd(2, aEff), p = a * b;
-  if (variant === 'std') return withDots({ text: `${p} ÷ ${b}`, answer: a }, a, b);
-  return withDots({ text: `□ ÷ ${b} = ${a}`, answer: p }, a, b);
+  if (variant === 'std') return { text: `${p} ÷ ${b}`, answer: a };
+  return { text: `□ ÷ ${b} = ${a}`, answer: p };
 }
 function genMixed(max, diff) {
   const hi = hiBound(max, diff);
@@ -306,30 +305,34 @@ function genJudge(m, diff) {
 
 function generateQuestion(module, opts) {
   const diff = (opts && opts.difficulty) || 'medium';
+  let q;
   switch (module.type) {
-    case 'add': return genAdd(module, diff);
-    case 'sub': return genSub(module, diff);
-    case 'addsub': return genAddSub(module, diff);
-    case 'mul': return genMul(module, diff);
-    case 'div': return genDiv(module, diff);
-    case 'mixed': return genMixed(module.max, diff);
-    case 'decadd': return genDecAdd(module, diff);
-    case 'decmul': return genDecMul(module, diff);
-    case 'decdiv': return genDecDiv(module, diff);
-    case 'decMix': return genDecMix(module, diff);
-    case 'fracadd': return genFracAdd(module, diff);
-    case 'fracmul': return genFracMul(module, diff);
-    case 'fracMix': return genFracMix(module, diff);
-    case 'word': return genWord(module, diff);
-    case 'compare': return genCompare(module, diff);
-    case 'fill': return genFill(module, diff);
-    case 'measure': return genMeasure(module, diff);
-    case 'shape': return genShape(module, diff);
-    case 'pattern': return genPattern(module, diff);
-    case 'stats': return genStats(module, diff);
-    case 'judge': return genJudge(module, diff);
-    default: return genAdd({ max: 20 }, diff);
+    case 'add': q = genAdd(module, diff); break;
+    case 'sub': q = genSub(module, diff); break;
+    case 'addsub': q = genAddSub(module, diff); break;
+    case 'mul': q = genMul(module, diff); break;
+    case 'div': q = genDiv(module, diff); break;
+    case 'mixed': q = genMixed(module.max, diff); break;
+    case 'decadd': q = genDecAdd(module, diff); break;
+    case 'decmul': q = genDecMul(module, diff); break;
+    case 'decdiv': q = genDecDiv(module, diff); break;
+    case 'decMix': q = genDecMix(module, diff); break;
+    case 'fracadd': q = genFracAdd(module, diff); break;
+    case 'fracmul': q = genFracMul(module, diff); break;
+    case 'fracMix': q = genFracMix(module, diff); break;
+    case 'word': q = genWord(module, diff); break;
+    case 'compare': q = genCompare(module, diff); break;
+    case 'fill': q = genFill(module, diff); break;
+    case 'measure': q = genMeasure(module, diff); break;
+    case 'shape': q = genShape(module, diff); break;
+    case 'pattern': q = genPattern(module, diff); break;
+    case 'stats': q = genStats(module, diff); break;
+    case 'judge': q = genJudge(module, diff); break;
+    default: q = genAdd({ max: 20 }, diff);
   }
+  // 若题干本身已含 "=" 或 "□"，前端不要再自动追加 "= ?"，避免 "□ × 2 = 18 = ?"
+  if (q && q.text && (q.text.includes('=') || q.text.includes('□'))) q.noEq = true;
+  return q;
 }
 
 window.SYLLABUS = SYLLABUS;
